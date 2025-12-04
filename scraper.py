@@ -107,7 +107,7 @@ for article in articles:
     except: continue
 
 # ▼▼▼ 서핏 시트 주소 입력 ▼▼▼
-surfit_url = 'https://docs.google.com/spreadsheets/d/1nKPVCZ6zAOfpqCjV6WfjkzCI55FA9r2yvi9XL3iIneo/edit?gid=0#gid=0'
+surfit_url = 'https://docs.google.com/spreadsheets/d/1nKPVCZ6zAOfpqCjV6WfjkzCI55FA9r2yvi9XL3iIneo/edit?gid=2112710663#gid=2112710663'
 save_to_sheet(surfit_url, surfit_data, "서핏")
 
 # ==========================================
