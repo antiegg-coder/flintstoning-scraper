@@ -1,0 +1,26 @@
+name: Wanted Scraper (원티드)
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # 매일 아침 9시 (한국시간)
+  workflow_dispatch: # 수동 실행 버튼
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.9'
+        
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        
+    - name: Run Wanted Scraper
+      env:
+        GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+      run: python wanted_scraper.py
