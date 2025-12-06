@@ -1,131 +1,165 @@
 import time
-import json
+import re
 import os
-import pandas as pd
+import json
 import gspread
-from gspread_dataframe import set_with_dataframe, get_as_dataframe
-from google.oauth2.service_account import Credentials
+from datetime import datetime
+from oauth2client.service_account import ServiceAccountCredentials
+
+# 셀레니움 관련
 from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-from selenium_stealth import stealth
-from datetime import datetime
-import random
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
-# 1. 인증
-json_creds = json.loads(os.environ['GOOGLE_CREDENTIALS'])
-scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-creds = Credentials.from_service_account_info(json_creds, scopes=scope)
-gc = gspread.authorize(creds)
+# 1. 설정
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1nKPVCZ6zAOfpqCjV6WfjkzCI55FA9r2yvi9XL3iIneo/edit"
 
-def save_to_sheet(sheet_url, new_data):
-    try:
-        if 'gid=' in sheet_url:
-            target_gid = int(sheet_url.split('gid=')[1].split('#')[0])
-            doc = gc.open_by_url(sheet_url)
-            worksheet = next((ws for ws in doc.worksheets() if ws.id == target_gid), None)
-        else:
-            doc = gc.open_by_url(sheet_url)
-            worksheet = doc.get_worksheet(0)
-            
-        if not worksheet:
-            print("❌ [오류] 탭을 찾을 수 없습니다.")
-            return
+# ▼ 방금 주신 'Wanted' 탭의 고유 번호
+TARGET_GID = 639559541
+SCRAPE_URL = "https://www.wanted.co.kr/wdlist/523/1635?country=kr&job_sort=job.popularity_order&years=-1&locations=all"
 
-        # 기존 데이터 로딩
-        existing_df = get_as_dataframe(worksheet, header=0)
-        existing_data_count = len(existing_df.dropna(how='all'))
-        next_row = existing_data_count + 2
-        
-        try:
-            existing_urls = worksheet.col_values(3)[1:]
-        except:
-            existing_urls = []
-            
-        print(f"📊 현재 시트 데이터: {len(existing_urls)}개")
-
-        final_data = []
-        for item in new_data:
-            if item['url'] not in existing_urls:
-                final_data.append(item)
-            else:
-                # 디버깅용 로그: 중복이라 건너뛴 경우 출력
-                print(f"   🚫 중복 제외됨: {item['title']}")
-        
-        if final_data:
-            df = pd.DataFrame(final_data)
-            set_with_dataframe(worksheet, df, row=next_row, include_column_header=False)
-            print(f"✅ [저장 성공] {len(final_data)}개 행이 추가되었습니다!")
-        else:
-            print("💤 [저장 안함] 모든 데이터가 이미 시트에 있습니다.")
-            
-    except Exception as e:
-        print(f"❌ [저장 실패] {e}")
-
-# 2. 브라우저 설정
-options = Options()
-options.add_argument('--headless')
-options.add_argument('--no-sandbox')
-options.add_argument('--disable-dev-shm-usage')
-options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-
-driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-
-stealth(driver,
-        languages=["ko-KR", "ko"],
-        vendor="Google Inc.",
-        platform="Win32",
-        webgl_vendor="Intel Inc.",
-        renderer="Intel Iris OpenGL Engine",
-        fix_hairline=True)
-
-today_date = datetime.now().strftime('%Y-%m-%d')
-
-print("▶ 원티드 접속 중...")
-driver.get("https://www.wanted.co.kr/wdlist/523/1635?country=kr&job_sort=job.popularity_order&years=-1&locations=all")
-time.sleep(10)
-
-for _ in range(5):
-    driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-    time.sleep(random.uniform(2, 4))
+def get_google_sheet():
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    creds_dict = json.loads(os.environ['GOOGLE_CREDENTIALS'])
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
     
-wanted_data = []
-all_links = driver.find_elements(By.TAG_NAME, "a")
-articles = [link for link in all_links if link.get_attribute("href") and "/wd/" in link.get_attribute("href")]
+    spreadsheet = client.open_by_url(SHEET_URL)
+    worksheet = None
+    
+    # GID로 시트 찾기
+    for sheet in spreadsheet.worksheets():
+        if str(sheet.id) == str(TARGET_GID):
+            worksheet = sheet
+            break
+            
+    if worksheet is None:
+        raise Exception(f"GID가 {TARGET_GID}인 시트를 찾을 수 없습니다.")
+    
+    print(f"📂 연결된 시트: {worksheet.title}")
+    return worksheet
 
-print(f"🔎 발견된 링크 후보: {len(articles)}개")
+def get_driver():
+    chrome_options = Options()
+    chrome_options.add_argument("--headless") 
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--window-size=1920,1080")
+    
+    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    chrome_options.add_argument(f"user-agent={user_agent}")
+    
+    driver = webdriver.Chrome(options=chrome_options)
+    return driver
 
-for i, article in enumerate(articles):
+def get_projects():
+    driver = get_driver()
+    new_data = []
+    today = datetime.now().strftime("%Y-%m-%d")
+
     try:
-        link = article.get_attribute("href")
+        print("🌐 원티드(Wanted) 접속 중...")
+        driver.get(SCRAPE_URL)
         
-        # [디버깅] 태그 찾기 시도
-        try:
-            title_tag = article.find_element(By.TAG_NAME, "strong")
-            title = title_tag.text.strip()
+        # 화면 로딩 대기
+        time.sleep(5)
+        
+        # 스크롤을 살짝 내려서 데이터를 더 불러옵니다
+        driver.execute_script("window.scrollTo(0, 1000);")
+        time.sleep(3)
+        
+        # 모든 링크(a 태그) 수집
+        elements = driver.find_elements(By.TAG_NAME, "a")
+        print(f"🔍 페이지 내 전체 링크 수: {len(elements)}개")
+
+        for elem in elements:
+            try:
+                full_url = elem.get_attribute("href")
+                
+                # 원티드 채용 공고 링크 패턴: /wd/숫자
+                if not full_url or "/wd/" not in full_url:
+                    continue
+                
+                # 텍스트 가져오기
+                raw_text = elem.text.strip()
+                if not raw_text: continue
+
+                # [원티드 제목 정제 로직]
+                lines = raw_text.split('\n')
+                cleaned_lines = [line.strip() for line in lines if line.strip()]
+                
+                if not cleaned_lines:
+                    continue
+                    
+                # 첫 번째 줄을 제목으로 사용
+                title = cleaned_lines[0]
+                
+                idx_match = re.search(r'/wd/(\d+)', full_url)
+                if len(title) > 2 and idx_match:
+                    
+                    if not any(d['url'] == full_url for d in new_data):
+                        new_data.append({
+                            'title': title,
+                            'url': full_url,
+                            'created_at': today
+                        })
+            except:
+                continue
+                
+    except Exception as e:
+        print(f"❌ 에러 발생: {e}")
+    finally:
+        driver.quit()
             
-            company_tag = article.find_element(By.CSS_SELECTOR, "span[class*='company']")
-            company = company_tag.text.strip()
-            
-            if title and company:
-                 wanted_data.append({
-                    'title': title, 'subtitle': '', 'url': link, 
-                    'created_at': today_date, 'company': company, 'status': 'archived', 'publish': ''
-                })
-        except:
-            # 태그를 못 찾으면 로그를 한 번 찍어봄 (처음 5개만)
-            if i < 5: 
-                print(f"   ⚠️ 파싱 실패 (태그 없음): {article.text[:20]}...")
+    print(f"🎯 수집된 공고: {len(new_data)}개")
+    return new_data
+
+def update_sheet(worksheet, data):
+    all_values = worksheet.get_all_values()
+    
+    if not all_values:
+        headers = []
+    else:
+        headers = all_values[0]
+
+    try:
+        idx_title = headers.index('title')
+        idx_url = headers.index('url')
+        idx_created_at = headers.index('created_at')
+        idx_status = headers.index('status')
+    except ValueError:
+        print("⛔ 헤더 오류: 시트 1행에 title, url, created_at, status 가 있어야 합니다.")
+        return
+
+    existing_urls = set()
+    for row in all_values[1:]:
+        if len(row) > idx_url:
+            existing_urls.add(row[idx_url])
+
+    rows_to_append = []
+    for item in data:
+        if item['url'] in existing_urls:
             continue
             
-    except: continue
+        new_row = [''] * len(headers)
+        new_row[idx_title] = item['title']
+        new_row[idx_url] = item['url']
+        new_row[idx_created_at] = item['created_at']
+        new_row[idx_status] = 'archived' # 원티드도 archived 고정
+        rows_to_append.append(new_row)
 
-print(f"📝 수집된 유효 데이터: {len(wanted_data)}개")
+    if rows_to_append:
+        worksheet.append_rows(rows_to_append)
+        print(f"💾 {len(rows_to_append)}개 저장 완료!")
+    else:
+        print("ℹ️ 새로운 공고가 없습니다.")
 
-# ▼▼▼ [중요] 원티드 시트 주소 확인 ▼▼▼
-wanted_url = 'https://docs.google.com/spreadsheets/d/1nKPVCZ6zAOfpqCjV6WfjkzCI55FA9r2yvi9XL3iIneo/edit?gid=1818966683#gid=1818966683'
-save_to_sheet(wanted_url, wanted_data)
-
-driver.quit()
+if __name__ == "__main__":
+    try:
+        sheet = get_google_sheet()
+        projects = get_projects()
+        update_sheet(sheet, projects)
+    except Exception as e:
+        print(f"🚨 실행 실패: {e}")
