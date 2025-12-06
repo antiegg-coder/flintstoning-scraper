@@ -1,26 +1,31 @@
-name: Side Scraper (사이드)
+name: Side Run Scraper
 
 on:
   schedule:
-    - cron: '0 0 * * *' # 매일 아침 9시
-  workflow_dispatch: # 수동 실행 버튼
+    # 매일 한국 시간 오전 9시 (UTC 00:00)
+    - cron: '0 0 * * *'
+  workflow_dispatch: # 수동 실행 버튼 활성화
 
 jobs:
-  build:
+  scrape:
     runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2
     
-    - name: Set up Python
-      uses: actions/setup-python@v2
-      with:
-        python-version: '3.9'
-        
-    - name: Install dependencies
-      run: |
-        pip install -r requirements.txt
-        
-    - name: Run Side Scraper
-      env:
-        GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-      run: python side_scraper.py
+    steps:
+      - name: 저장소 코드 체크아웃
+        uses: actions/checkout@v3
+
+      - name: 파이썬 설정 (Python 3.9)
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: 라이브러리 설치
+        run: |
+          pip install -r requirements.txt
+
+      - name: 크롤러 실행
+        env:
+          # 깃허브 Secret에 저장한 구글 키를 파이썬으로 전달
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: |
+          python side_scraper.py
