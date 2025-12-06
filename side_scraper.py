@@ -6,7 +6,7 @@ import gspread
 from datetime import datetime
 from oauth2client.service_account import ServiceAccountCredentials
 
-# Selenium 관련 라이브러리
+# 셀레니움 관련
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -17,6 +17,7 @@ TARGET_GID = 1818966683
 SCRAPE_URL = "https://sideproject.co.kr/projects"
 
 def get_google_sheet():
+    # 깃허브 Secret 키로 구글 시트 접속
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds_dict = json.loads(os.environ['GOOGLE_CREDENTIALS'])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
@@ -24,21 +25,23 @@ def get_google_sheet():
     
     spreadsheet = client.open_by_url(SHEET_URL)
     worksheet = None
+    
+    # GID로 시트 찾기
     for sheet in spreadsheet.worksheets():
         if sheet.id == TARGET_GID:
             worksheet = sheet
             break
+            
     if worksheet is None:
         raise Exception(f"GID가 {TARGET_GID}인 시트를 찾을 수 없습니다.")
     return worksheet
 
 def get_driver():
-    # GitHub Actions(리눅스 서버)에서 크롬을 띄우기 위한 필수 옵션들
+    # 깃허브 서버에서 화면 없이(Headless) 크롬 실행
     chrome_options = Options()
-    chrome_options.add_argument("--headless")  # 화면 없이 실행
+    chrome_options.add_argument("--headless") 
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
     
     driver = webdriver.Chrome(options=chrome_options)
     return driver
@@ -50,21 +53,18 @@ def get_projects():
 
     try:
         driver.get(SCRAPE_URL)
-        # 페이지 로딩 대기 (안전하게 5초)
-        driver.implicitly_wait(5)
-        time.sleep(3) 
+        time.sleep(3) # 페이지 로딩 대기
 
-        # 게시물 링크 요소 찾기 (a 태그 중 class가 post_link인 것)
+        # 게시물 링크(a 태그) 찾기
         articles = driver.find_elements(By.CSS_SELECTOR, "a.post_link")
 
         for article in articles:
-            # 텍스트 추출 (제목)
+            # 제목
             title = article.text.strip()
-            
-            # href 속성 추출 (링크)
+            # 링크
             raw_link = article.get_attribute("href")
             
-            # idx 추출하여 깔끔한 URL 만들기
+            # idx 추출
             idx_match = re.search(r'idx=(\d+)', raw_link)
             if idx_match:
                 idx = idx_match.group(1)
@@ -77,29 +77,31 @@ def get_projects():
                 })
                 
     except Exception as e:
-        print(f"크롤링 중 에러 발생: {e}")
+        print(f"크롤링 중 에러: {e}")
     finally:
-        driver.quit() # 브라우저 닫기
+        driver.quit()
             
     return new_data
 
 def update_sheet(worksheet, data):
     all_values = worksheet.get_all_values()
     if not all_values:
-        print("시트가 비어있습니다. 헤더를 확인해주세요.")
+        print("시트가 비어있습니다.")
         return
 
     headers = all_values[0]
     
+    # 1행 헤더 위치 자동 찾기
     try:
         idx_title = headers.index('title')
         idx_url = headers.index('url')
         idx_created_at = headers.index('created_at')
         idx_status = headers.index('status')
     except ValueError:
-        print("오류: 시트 1행에 'title', 'url', 'created_at', 'status' 헤더가 있어야 합니다.")
+        print("오류: 1행에 title, url, created_at, status 헤더가 정확히 있어야 합니다.")
         return
 
+    # 중복 방지용 기존 URL 확인
     existing_urls = set()
     for row in all_values[1:]:
         if len(row) > idx_url:
@@ -110,17 +112,20 @@ def update_sheet(worksheet, data):
         if item['url'] in existing_urls:
             continue
             
+        # 빈 행 만들기
         new_row = [''] * len(headers)
+        
+        # 데이터 채우기
         new_row[idx_title] = item['title']
         new_row[idx_url] = item['url']
         new_row[idx_created_at] = item['created_at']
-        new_row[idx_status] = 'archived'  # status 자동 입력
+        new_row[idx_status] = 'archived'  # 요청하신 대로 archived 자동 입력
         
         rows_to_append.append(new_row)
 
     if rows_to_append:
         worksheet.append_rows(rows_to_append)
-        print(f"총 {len(rows_to_append)}개의 데이터를 저장했습니다.")
+        print(f"{len(rows_to_append)}개 추가 완료.")
     else:
         print("새로운 공고가 없습니다.")
 
@@ -130,4 +135,4 @@ if __name__ == "__main__":
         projects = get_projects()
         update_sheet(sheet, projects)
     except Exception as e:
-        print(f"전체 실행 중 에러: {e}")
+        print(f"실행 에러: {e}")
