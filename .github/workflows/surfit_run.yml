@@ -1,4 +1,4 @@
-name: Surfit Scraper (서핏)
+name: Surfit Scraper Run
 
 on:
   schedule:
