@@ -1,4 +1,4 @@
-name: Side Run Scraper
+name: Side Scraper Run
 
 on:
   schedule:
