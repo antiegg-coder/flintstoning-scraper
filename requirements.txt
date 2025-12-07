@@ -8,3 +8,4 @@ google-auth
 oauth2client
 requests
 beautifulsoup4
+google-generativeai
