@@ -27,7 +27,5 @@ jobs:
 
       - name: Run spreadsheet-gpt script
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
-          SHEET_NAME: ${{ secrets.SHEET_NAME }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python spreadsheet-gpt.py
