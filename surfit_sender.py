@@ -100,15 +100,10 @@ try:
     print("--- GPT 요약 요청 ---")
     client_openai = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
 
-    # [수정] 인사이트 전달용 프롬프트
     gpt_prompt = f"""
     너는 IT/테크 트렌드를 분석해주는 '인사이트 큐레이터'야.
     아래 [글 내용]을 읽고, 팀원들에게 공유할 수 있게 깔끔하게 요약해줘.
-
-    [제약 사항]
-    1. 이모지 금지, 자연스러운 줄글 사용.
-    2. 강조할 단어는 *(별표 하나) 사용.
-    3. 제목은 내가 붙일 테니 **내용 요약부터 시작해**.
+    이모지 금지, 자연스러운 줄글 사용.
 
     [출력 양식]
     *요약*
@@ -128,14 +123,18 @@ try:
             {"role": "user", "content": gpt_prompt}
         ]
     )
-    
+
+    # 1. GPT 응답 내용 가져오기
     gpt_body = completion.choices[0].message.content
+
+    # 2. [수정] 헤더를 '추천 프로젝트' -> '오늘의 인사이트'로 변경
+    final_message = f"*📰 오늘의 인사이트*\n<{target_url}|{project_title}>\n\n{gpt_body}"
     
-    # 메시지 조립
-    final_message = f"*오늘의 인사이트*\n<{target_url}|{article_title}>\n\n{gpt_body}"
+    # 3. [수정] 버튼 텍스트를 '모집공고 바로가기' -> '원문 보러가기'로 변경
+    final_message_with_link = f"{final_message}\n\n🔗 <{target_url}|원문 보러가기>"
     
     print("--- 최종 결과물 ---")
-    print(final_message)
+    print(final_message_with_link)
 
 
     # =========================================================
@@ -144,15 +143,15 @@ try:
     print("--- 슬랙 전송 시작 ---")
     
     webhook_url = os.environ['SLACK_WEBHOOK_URL']
-    payload = {"text": final_message}
+    
+    # 4. 전송할 때는 링크가 포함된 변수(final_message_with_link)를 사용
+    payload = {"text": final_message_with_link}
     
     slack_res = requests.post(webhook_url, json=payload)
     
     if slack_res.status_code == 200:
         print("✅ 슬랙 전송 성공!")
         
-        # [핵심 기능] 전송 성공 시 상태 변경 (archived -> published)
-        # F열은 6번째 열입니다.
         try:
             print(f"▶ 시트 상태 업데이트 중... (행: {update_row_index}, 열: 6)")
             sheet.update_cell(update_row_index, 6, 'published')
@@ -163,6 +162,3 @@ try:
     else:
         print(f"❌ 전송 실패 (상태 코드: {slack_res.status_code})")
         print(slack_res.text)
-
-except Exception as e:
-    print(f"\n❌ 에러 발생: {e}")
