@@ -160,7 +160,7 @@ try:
 
     # [수정 2] 제목에서 이모지(📰) 제거
     # 요청: 1번째 줄은 "오늘의 인사이트"로 고정 (이모지 없음)
-    final_message = f"*오늘의 인사이트*\n<{target_url}|{project_title}>\n\n{gpt_body}"
+    final_message = f"*오늘의 인사이트*\n제목: {article_title}\n\n{gpt_body}"
     
     # [수정 3] 하단 링크에만 🔗 이모지 유지
     final_message_with_link = f"{final_message}\n\n🔗 <{target_url}|원문 보러가기>"
