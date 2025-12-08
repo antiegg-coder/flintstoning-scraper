@@ -122,22 +122,27 @@ try:
         exit()
 
     # =========================================================
-    # 5. GPT 요약
+    # 5. GPT 요약 (조건 반영 수정됨)
     # =========================================================
     print("--- GPT 요약 요청 ---")
     client_openai = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
 
+    # [수정 1] 프롬프트 강화: ~합니다체 강제, 이모지 절대 금지
     gpt_prompt = f"""
     너는 IT/테크 트렌드를 분석해주는 '인사이트 큐레이터'야.
-    아래 [글 내용]을 읽고, 팀원들에게 공유할 수 있게 깔끔하게 요약해줘.
-    이모지 금지, 자연스러운 줄글 사용.
+    아래 [글 내용]을 읽고, 팀원들에게 공유할 수 있게 요약해줘.
+
+    [작성 규칙]
+    1. **어조**: 모든 문장은 반드시 '**~합니다.**' 또는 '**~입니다.**'와 같은 정중한 합쇼체(경어)로 끝내야 해.
+    2. **금지**: '~음', '~함', '~것' 같은 명사형 종결이나 반말은 절대 사용하지 마.
+    3. **이모지**: 본문 내용 중에 이모지를 절대 사용하지 마.
 
     [출력 양식]
     *요약*
-    (글의 핵심 내용을 3문장 내외의 자연스러운 줄글로 작성)
+    (글의 핵심 내용을 3문장 내외의 줄글로 작성. 반드시 '~합니다.'로 끝낼 것.)
 
     *인사이트*
-    (이 글에서 얻을 수 있는 시사점이나 배울 점을 1~2문장으로 작성)
+    (이 글에서 얻을 수 있는 시사점을 1~2문장으로 작성. 반드시 '~합니다.'로 끝낼 것.)
 
     [글 내용]
     {truncated_text}
@@ -146,13 +151,18 @@ try:
     completion = client_openai.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
-            {"role": "system", "content": "You are a helpful assistant. Do not use emojis."},
+            {"role": "system", "content": "You are a helpful assistant. Use polite Korean sentences ending in period."},
             {"role": "user", "content": gpt_prompt}
         ]
     )
 
     gpt_body = completion.choices[0].message.content
-    final_message = f"*📰 오늘의 인사이트*\n<{target_url}|{project_title}>\n\n{gpt_body}"
+
+    # [수정 2] 제목에서 이모지(📰) 제거
+    # 요청: 1번째 줄은 "오늘의 인사이트"로 고정 (이모지 없음)
+    final_message = f"*오늘의 인사이트*\n<{target_url}|{project_title}>\n\n{gpt_body}"
+    
+    # [수정 3] 하단 링크에만 🔗 이모지 유지
     final_message_with_link = f"{final_message}\n\n🔗 <{target_url}|원문 보러가기>"
     
     print("--- 최종 결과물 ---")
