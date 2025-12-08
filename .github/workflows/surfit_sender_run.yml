@@ -1,13 +1,12 @@
 name: Surfit Sender Run
 
 on:
-  # 1. 수동 실행 버튼
   workflow_dispatch:
-  
-  # 2. 자동 스케줄링 (한국 시간 매일 저녁 8시)
-  # UTC 11:00 = KST 20:00
   schedule:
-    - cron: '0 11 * * *'
+    # 매일 저녁 9시 (UTC 12:00)
+    - cron: '0 12 * * *'
+
+
 
 jobs:
   run-insight:
