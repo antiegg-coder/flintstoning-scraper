@@ -63,8 +63,8 @@ try:
     # =========================================================
     
     # ★ [체크] 엑셀 헤더 이름 확인
-    title_col_name = '제목' 
-    url_col_name = ''
+    title_col_name = 'title' 
+    url_col_name = 'url'
 
     if title_col_name not in row or url_col_name not in row:
         print(f"오류: 엑셀에 '{title_col_name}' 또는 '{url_col_name}' 헤더가 없습니다.")
@@ -132,7 +132,7 @@ try:
     # =========================================================
     print("--- 슬랙 전송 시작 ---")
     
-    webhook_url = os.environ['SLACK_WEBHOOK_url']
+    webhook_url = os.environ['SLACK_WEBHOOK_URL']
     payload = {"text": final_message}
     
     slack_res = requests.post(webhook_url, json=payload)
