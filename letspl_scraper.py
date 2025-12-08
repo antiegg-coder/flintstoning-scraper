@@ -15,7 +15,7 @@ from selenium.webdriver.support import expected_conditions as EC
 
 # 1. 설정
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1nKPVCZ6zAOfpqCjV6WfjkzCI55FA9r2yvi9XL3iIneo/edit"
-TARGET_GID = 981623942  # 시트 탭 GID
+TARGET_GID = 1669656972  # 시트 탭 GID
 # [수정됨] 렛플(Letspl) 검색 결과 URL
 SCRAPE_URL = "https://letspl.me/project?location=KR00&type=00&recruitingType=all&jobD=0207&skill=&interest=&keyword="
 
