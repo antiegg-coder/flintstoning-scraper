@@ -1,0 +1,27 @@
+name: 엑셀 필터링 실행
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-filter:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 저장소 코드 체크아웃
+      uses: actions/checkout@v3
+
+    - name: 파이썬 3.9 설정
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: 필요한 라이브러리 설치
+      run: |
+        pip install -r requirements.txt
+
+    # [수정된 부분] 시크릿 이름을 GOOGLE_CREDENTIALS로 변경
+    - name: 파이썬 스크립트 실행
+      env:
+        GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+      run: python main.py
