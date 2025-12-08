@@ -113,26 +113,32 @@ try:
         ]
     )
 
+    # 1. GPT 응답 내용 가져오기
     gpt_body = completion.choices[0].message.content
-    # ... (GPT 응답 받은 후) ...
 
-    # [수정] 링크 이모지(🔗)와 함께 하단 링크 추가
+    # 2. [중요] final_message를 먼저 정의해야 합니다!
+    final_message = f"*추천 프로젝트*\n<{target_url}|{project_title}>\n\n{gpt_body}"
+    
+    # 3. 그 다음, 링크와 이모지를 추가합니다.
     final_message_with_link = f"{final_message}\n\n🔗 <{target_url}|모집공고 바로가기>"
-
+    
     print("--- 최종 결과물 ---")
     print(final_message_with_link)
 
+
     # =========================================================
-    # 6. 슬랙 전송
+    # 6. 슬랙 전송 & 시트 업데이트 (published 처리)
     # =========================================================
     print("--- 슬랙 전송 시작 ---")
     
     webhook_url = os.environ['SLACK_WEBHOOK_URL']
     
-    # [수정] payload에 'final_message' 대신 'final_message_with_link'를 사용해야 함
+    # 4. 전송할 때는 링크가 포함된 변수(final_message_with_link)를 사용
     payload = {"text": final_message_with_link}
     
     slack_res = requests.post(webhook_url, json=payload)
+    
+    # ... (이하 동일)
     
     if slack_res.status_code == 200:
         print("✅ 슬랙 전송 성공!")
