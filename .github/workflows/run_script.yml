@@ -1,4 +1,4 @@
-name: 엑셀 필터링 및 요약 실행
+name: Side Sender Run
 
 on:
   # 1. 수동 실행 버튼 (테스트용)
