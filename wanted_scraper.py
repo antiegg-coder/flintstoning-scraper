@@ -10,8 +10,8 @@ from oauth2client.service_account import ServiceAccountCredentials
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+# from selenium.webdriver.support.ui import WebDriverWait # 현재 미사용이라 주석처리
+# from selenium.webdriver.support import expected_conditions as EC # 현재 미사용이라 주석처리
 
 # 1. 설정
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1nKPVCZ6zAOfpqCjV6WfjkzCI55FA9r2yvi9XL3iIneo/edit"
@@ -46,9 +46,7 @@ def get_driver():
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
-    
-    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    chrome_options.add_argument(f"user-agent={user_agent}")
+    # options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36")
     
     driver = webdriver.Chrome(options=chrome_options)
     return driver
@@ -85,7 +83,7 @@ def get_projects():
                 raw_text = elem.text.strip()
                 if not raw_text: continue
 
-                # [수정된 제목 추출 로직]
+                # [수정된 제목/회사명 추출 로직]
                 lines = raw_text.split('\n')
                 
                 # 필터링: 보상금, 응답률 등 불필요한 정보가 섞인 줄 제거
@@ -101,7 +99,7 @@ def get_projects():
                     if text.endswith("원") and any(c.isdigit() for c in text):
                         continue
                     # 3. '응답률 높음' 같은 뱃지 제거
-                    if "응답률" in text or "입사축하금" in text:
+                    if "응답률" in text or "입사축하금" in text or "지역" in text: # 지역 정보도 필터링에 추가
                         continue
                         
                     cleaned_lines.append(text)
@@ -109,69 +107,100 @@ def get_projects():
                 if not cleaned_lines:
                     continue
                     
-                # 필터링 후 남은 첫 번째 줄을 진짜 제목으로 간주
-                # (보통 제목이 회사이름보다 먼저 나오거나, 가장 위에 있음)
+                # ---- [변경점 1] 회사명 추출 로직 추가 ----
+                # 필터링 후 남은 줄 중 첫 번째가 제목, 두 번째가 회사명이라고 가정
                 title = cleaned_lines[0]
+                company = "" # 기본값 비워둠
+
+                # 정제된 줄이 2줄 이상 남아있다면, 두 번째 줄을 회사명으로 간주
+                if len(cleaned_lines) >= 2:
+                    company = cleaned_lines[1]
+                # -----------------------------------------
                 
                 idx_match = re.search(r'/wd/(\d+)', full_url)
-                if len(title) > 2 and idx_match:
+                # 제목이 너무 짧으면 이상한 데이터일 수 있음 (길이 조건 약간 완화)
+                if len(title) > 1 and idx_match:
                     
                     if not any(d['url'] == full_url for d in new_data):
                         new_data.append({
                             'title': title,
+                            'company': company, # 데이터에 회사명 추가
                             'url': full_url,
                             'scraped_at': today
                         })
-            except:
-                continue
+            except Exception as e_inner:
+                 # 개별 요소 처리 중 에러는 무시하고 다음 요소로 진행
+                 # print(f"개별 요소 처리 에러: {e_inner}")
+                 continue
                 
     except Exception as e:
-        print(f"❌ 에러 발생: {e}")
+        print(f"❌ 크롤링 중 에러 발생: {e}")
     finally:
         driver.quit()
             
     print(f"🎯 수집된 공고: {len(new_data)}개")
+    # 확인을 위해 상위 3개만 출력해봄
+    # for d in new_data[:3]:
+    #     print(f"- [{d['company']}] {d['title']}")
+        
     return new_data
 
 def update_sheet(worksheet, data):
     all_values = worksheet.get_all_values()
     
     if not all_values:
-        headers = []
+        # 시트가 비어있으면 헤더부터 만듭니다.
+        headers = ['title', 'company', 'url', 'scraped_at', 'status']
+        worksheet.append_row(headers)
+        all_values = [headers] # 아래 로직을 위해 추가
+        print("ℹ️ 빈 시트 감지: 헤더 행을 새로 만들었습니다.")
     else:
         headers = all_values[0]
 
     try:
+        # ---- [변경점 2] company 인덱스 찾기 추가 ----
         idx_title = headers.index('title')
+        idx_company = headers.index('company') # 필수! 시트에 이 컬럼이 있어야 함
         idx_url = headers.index('url')
         idx_scraped_at = headers.index('scraped_at')
         idx_status = headers.index('status')
-    except ValueError:
-        print("⛔ 헤더 오류: 시트 1행에 title, url, scraped_at, status 가 있어야 합니다.")
+        # -------------------------------------------
+    except ValueError as e:
+        missing_col = str(e).split("'")[1]
+        print(f"⛔ 헤더 오류: 시트 1행에 '{missing_col}' 컬럼이 없습니다.")
+        print("title, company, url, scraped_at, status 헤더가 모두 존재하는지 확인해주세요.")
         return
 
     existing_urls = set()
-    for row in all_values[1:]:
-        if len(row) > idx_url:
-            existing_urls.add(row[idx_url])
+    # 데이터가 있는 2행부터 URL 수집
+    if len(all_values) > 1:
+        for row in all_values[1:]:
+            # 행의 길이가 idx_url보다 짧을 경우 대비
+            if len(row) > idx_url:
+                existing_urls.add(row[idx_url])
 
     rows_to_append = []
+    # 구글 시트 API 요구사항에 맞춰 빈 셀로 채워진 기본 행 생성
+    empty_row_structure = [''] * len(headers)
+
     for item in data:
         if item['url'] in existing_urls:
             continue
             
-        new_row = [''] * len(headers)
+        new_row = empty_row_structure.copy()
         new_row[idx_title] = item['title']
+        new_row[idx_company] = item['company'] # 회사명 매핑
         new_row[idx_url] = item['url']
         new_row[idx_scraped_at] = item['scraped_at']
         new_row[idx_status] = 'archived'
         rows_to_append.append(new_row)
 
     if rows_to_append:
+        # 한 번에 여러 행 추가 (API 호출 최소화)
         worksheet.append_rows(rows_to_append)
-        print(f"💾 {len(rows_to_append)}개 저장 완료!")
+        print(f"💾 {len(rows_to_append)}개 신규 공고 저장 완료!")
     else:
-        print("ℹ️ 새로운 공고가 없습니다.")
+        print("ℹ️ 저장할 새로운 공고가 없습니다.")
 
 if __name__ == "__main__":
     try:
