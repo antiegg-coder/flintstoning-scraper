@@ -22,8 +22,8 @@ try:
     # 시트 제목
     spreadsheet = client.open('플린트스토닝 소재 DB') 
     
-    # 세 번째 탭 선택 (Index 2)
-    sheet = spreadsheet.get_worksheet(2)
+    # 네 번째 탭 선택 (Index 3)
+    sheet = spreadsheet.get_worksheet(3)
 
     # 데이터 가져오기
     data = sheet.get_all_values()
