@@ -114,19 +114,23 @@ try:
     )
 
     gpt_body = completion.choices[0].message.content
-    final_message = f"*추천 프로젝트*\n<{target_url}|{project_title}>\n\n{gpt_body}"
-    
-    print("--- 최종 결과물 ---")
-    print(final_message)
+    # ... (GPT 응답 받은 후) ...
 
+    # [수정] 링크 이모지(🔗)와 함께 하단 링크 추가
+    final_message_with_link = f"{final_message}\n\n🔗 <{target_url}|모집공고 바로가기>"
+
+    print("--- 최종 결과물 ---")
+    print(final_message_with_link)
 
     # =========================================================
-    # 6. 슬랙 전송 & 시트 업데이트 (published 처리)
+    # 6. 슬랙 전송
     # =========================================================
     print("--- 슬랙 전송 시작 ---")
     
     webhook_url = os.environ['SLACK_WEBHOOK_URL']
-    payload = {"text": final_message}
+    
+    # [수정] payload에 'final_message' 대신 'final_message_with_link'를 사용해야 함
+    payload = {"text": final_message_with_link}
     
     slack_res = requests.post(webhook_url, json=payload)
     
