@@ -62,6 +62,7 @@ try:
     # =========================================================
     
     # 위치 기반 추출 (A열=0, C열=2)
+    # 만약 헤더 이름으로 찾고 싶다면 row['제목'], row['URL']로 변경 가능
     project_title = row.iloc[0]
     target_url = row.iloc[2]
     
@@ -132,4 +133,23 @@ try:
     print("--- 슬랙 전송 시작 ---")
     
     webhook_url = os.environ['SLACK_WEBHOOK_URL']
-    payload
+    payload = {"text": final_message}
+    
+    slack_res = requests.post(webhook_url, json=payload)
+    
+    if slack_res.status_code == 200:
+        print("✅ 슬랙 전송 성공!")
+        
+        try:
+            print(f"▶ 시트 상태 업데이트 중... (행: {update_row_index}, 열: 6)")
+            sheet.update_cell(update_row_index, 6, 'published')
+            print("✅ 상태 변경 완료 (archived -> published)")
+        except Exception as e:
+            print(f"⚠️ 상태 업데이트 실패: {e}")
+            
+    else:
+        print(f"❌ 전송 실패 (상태 코드: {slack_res.status_code})")
+        print(slack_res.text)
+
+except Exception as e:
+    print(f"\n❌ 에러 발생: {e}")
