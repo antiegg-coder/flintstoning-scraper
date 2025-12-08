@@ -110,10 +110,22 @@ try:
 
     client_openai = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
 
-    # GPT에게 보낼 명령어(프롬프트) 작성
+    # [수정됨] 옵션 1: 전문 큐레이터 스타일 적용
     gpt_prompt = f"""
-    아래 [글 내용]을 읽고 핵심 내용을 3줄로 요약해줘.
-    반드시 한국어로 답변해줘.
+    너는 IT/비즈니스 커뮤니티에 매일 유익한 정보를 전달하는 '전문 큐레이터'야.
+    아래 [글 내용]을 읽고, 슬랙(Slack) 커뮤니티 멤버들이 흥미를 가질 수 있도록 요약해줘.
+
+    [작성 가이드]
+    1. 톤앤매너: 전문적이면서도 친절하게 (~해요 체 사용)
+    2. 형식:
+       - 💡 **[제목]**: 글의 핵심을 관통하는 매력적인 한 줄 제목
+       - 📝 **[3줄 요약]**:
+         • 핵심 내용 1
+         • 핵심 내용 2
+         • 핵심 내용 3
+       - 🚀 **[인사이트]**: 이 글이 주는 시사점이나 우리가 주목해야 할 포인트 1문장
+
+    반드시 한국어로 작성해줘.
 
     [글 내용]
     {truncated_text}
@@ -131,10 +143,13 @@ try:
     # 결과 받기
     summary = completion.choices[0].message.content
     
+    # [수정됨] 요약문 아래에 원문 URL을 깔끔하게 붙여서 출력
+    final_message = f"{summary}\n\n🔗 **원문 보러 가기**: {target_url}"
+    
     print("\n" + "="*30)
-    print(" [GPT 요약 결과] ")
+    print(" [슬랙 공유용 메시지] ")
     print("="*30)
-    print(summary)
+    print(final_message)
     print("="*30)
 
 except Exception as e:
