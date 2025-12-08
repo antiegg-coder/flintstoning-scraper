@@ -63,13 +63,12 @@ try:
     
     title_col_name = 'title' 
     url_col_name = 'url'
-    company_col_name = 'company'  
-    
-    # 헤더 확인
+    company_col_name = 'company' 
+
     missing_cols = []
     if title_col_name not in row: missing_cols.append(title_col_name)
     if url_col_name not in row: missing_cols.append(url_col_name)
-    # company 컬럼이 없으면 에러 대신 기본값 처리할 수도 있으나, 여기선 체크하도록 함
+    
     if company_col_name not in row: 
         print(f"⚠️ 경고: '{company_col_name}' 컬럼이 없습니다. 회사명은 'Company'로 대체합니다.")
         company_name = "Company"
@@ -104,39 +103,43 @@ try:
     truncated_text = full_text[:3000]
 
     # =========================================================
-    # 5. GPT 요약 (회사명 지정 + 내용 요약)
+    # 5. GPT 요약 (회사명 지정 + 회사 소개 작성)
     # =========================================================
     print("--- GPT 요약 요청 ---")
     client_openai = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
 
-    # [수정] 스프레드시트에서 가져온 company_name을 프롬프트에 직접 주입
+    # [수정] 본문 요약 대신 '회사에 대한 설명'을 요청하도록 프롬프트 변경
     gpt_prompt = f"""
     너는 채용 공고를 분석해서 슬랙(Slack) 메시지로 보내기 좋은 형태로 바꿔주는 봇이야.
-    아래 [채용 정보]를 읽고, **출력 예시**와 똑같은 포맷으로 답변해.
+    아래 [채용 정보]와 너의 배경지식을 활용해서, **출력 예시**와 똑같은 포맷으로 답변해.
 
     [출력 예시]
     *추천 채용 공고*
     [{company_name}] {project_title}
 
-    여기에 회사 정보를 헤드헌터의 입장에서 2~3문장으로 자연스럽게 작성해. 해요체(~합니다)를 사용해.
+    여기에 **[{company_name}]가 어떤 회사인지(주요 서비스, 비즈니스 모델 등)**를 2~3줄로 설명해줘.
+    채용 공고 본문의 내용을 참고하되, 네가 알고 있는 회사라면 그 지식을 활용해서 구체적으로 적어줘.
+    어투는 해요체(~합니다)를 사용해.
     
     -
 
     [작성 규칙]
     1. 첫 줄은 무조건 `*추천 채용 공고*`로 고정해.
     2. 두 번째 줄은 반드시 `[{company_name}] {project_title}` 그대로 작성해.
-    3. 요약문 아래에 빈 줄을 하나 넣고, 맨 마지막 줄에는 하이픈(-) 하나만 딱 넣어줘.
-    4. 불필요한 설명(예: "요약 내용입니다")은 절대 넣지 마.
+    3. 설명문 아래에 빈 줄을 하나 넣고, 맨 마지막 줄에는 하이픈(-) 하나만 딱 넣어줘.
+    4. "이 회사는..." 처럼 주어로 시작하지 말고 자연스럽게 바로 설명을 시작해.
+    5. 불필요한 서두(예: "알겠습니다")는 절대 넣지 마.
 
     [채용 정보]
-    제목: {project_title}
-    본문: {truncated_text}
+    회사명: {company_name}
+    공고 제목: {project_title}
+    본문 텍스트: {truncated_text}
     """
 
     completion = client_openai.chat.completions.create(
         model="gpt-3.5-turbo",
         messages=[
-            {"role": "system", "content": "You are a helpful HR assistant."},
+            {"role": "system", "content": "You are a helpful HR assistant. You are good at explaining what a company does."},
             {"role": "user", "content": gpt_prompt}
         ]
     )
@@ -144,10 +147,8 @@ try:
     final_message = completion.choices[0].message.content.strip()
     
     print("--- GPT 응답 완료 ---")
-    # print(final_message) # 디버깅용
 
-    # [수정] A안 반영: 링크 누락 방지를 위해 파이썬에서 URL 강제 결합
-    # GPT가 마지막에 '-'를 넣었으므로 그 아래에 링크 추가
+    # 링크 추가
     final_message_with_link = f"{final_message}\n\n <{target_url}|공고 바로가기>"
 
     print("--- 최종 전송 메시지 ---")
@@ -159,7 +160,6 @@ try:
     print("--- 슬랙 전송 시작 ---")
     
     webhook_url = os.environ['SLACK_WEBHOOK_URL']
-    # [수정] 링크가 포함된 메시지 전송
     payload = {"text": final_message_with_link}
     
     slack_res = requests.post(webhook_url, json=payload)
