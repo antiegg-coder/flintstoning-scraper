@@ -151,8 +151,8 @@ def update_sheet(worksheet, data):
         new_row[idx_url] = item['url']
         new_row[idx_created_at] = item['created_at']
         
-        # [수정됨] 무조건 'archived'로 저장
-        new_row[idx_status] = 'archived'
+        # [수정됨] 무조건 'scraped'로 저장
+        new_row[idx_status] = 'scraped'
         
         rows_to_append.append(new_row)
 
