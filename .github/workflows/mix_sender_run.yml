@@ -1,0 +1,32 @@
+name: Mix Sender Run
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 매일 저녁 8시 (UTC 11:00)
+    - cron: '0 11 * * *'
+
+jobs:
+  run-mix:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 저장소 코드 체크아웃
+      uses: actions/checkout@v3
+
+    - name: 파이썬 3.9 설정
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: 필요한 라이브러리 설치
+      run: |
+        pip install -r requirements.txt
+
+    - name: 파이썬 스크립트 실행
+      env:
+        GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      # [중요] mix_sender.py 실행
+      run: python mix_sender.py
