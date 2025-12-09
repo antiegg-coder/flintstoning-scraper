@@ -97,10 +97,30 @@ try:
         print(f"접속 실패 (상태 코드: {response.status_code})")
         exit()
 
-    soup = BeautifulSoup(response.text, 'html.parser')
-    paragraphs = soup.find_all('p')
-    full_text = " ".join([p.get_text() for p in paragraphs])
-    truncated_text = full_text[:3000]
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+    texts = []
+
+    # 제목 계열 (회사/포지션 단서를 많이 줌)
+    for tag in soup.find_all(['h1', 'h2', 'h3']):
+        texts.append(tag.get_text(separator=" ", strip=True))
+
+    # 본문 문단
+    for p in soup.find_all('p'):
+        texts.append(p.get_text(separator=" ", strip=True))
+
+    # 리스트 항목 (업무 내용, 회사 특징 등)
+    for li in soup.find_all('li'):
+        texts.append(li.get_text(separator=" ", strip=True))
+
+    # meta description도 있으면 추가
+    meta_desc = soup.find('meta', attrs={'name': 'description'})
+    if meta_desc and meta_desc.get('content'):
+        texts.append(meta_desc['content'].strip())
+
+    full_text = " ".join(texts)
+    truncated_text = full_text[:4000]  # 조금 늘려도 됩니다 (모델 입력 한도 안에서)
+
 
         # =========================================================
     # 5. GPT 요약 (회사명 지정 + 회사 소개 작성)
