@@ -1,4 +1,4 @@
-name: Wanted Scraper Run
+name: Offercent Scraper Run
 
 on:
   schedule:
@@ -23,8 +23,8 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: 원티드 크롤러 실행
+      - name: 오퍼센트 크롤러 실행
         env:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: |
-          python wanted_scraper.py
+          python offercent_scraper.py
