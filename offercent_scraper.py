@@ -16,10 +16,9 @@ from selenium.webdriver.support import expected_conditions as EC
 # 1. 설정
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1nKPVCZ6zAOfpqCjV6WfjkzCI55FA9r2yvi9XL3iIneo/edit"
 
-# ▼ 원티드 탭 GID (확인 필수 - 오퍼센트용으로 시트를 새로 판다면 변경 필요)
-TARGET_GID = 639559541 
-
-# [변경됨] 스크래핑 대상 URL: 오퍼센트
+# ▼ 시트 GID (확인 필수)
+TARGET_GID = 639559541
+# [변경됨] 오퍼센트 URL
 SCRAPE_URL = "https://offercent.co.kr/company-list?jobCategories=0040002%2C0170004"
 
 def get_google_sheet():
@@ -49,7 +48,7 @@ def get_driver():
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
     
-    # [중요] 봇 탐지 우회 설정
+    # 봇 탐지 우회
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option("useAutomationExtension", False)
@@ -58,8 +57,6 @@ def get_driver():
     chrome_options.add_argument(f"user-agent={user_agent}")
     
     driver = webdriver.Chrome(options=chrome_options)
-    
-    # navigator.webdriver 속성을 숨김
     driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     
     return driver
@@ -70,85 +67,92 @@ def get_projects():
     today = datetime.now().strftime("%Y-%m-%d")
 
     try:
-        print("🌐 오퍼센트(Offercent) 접속 중...")
+        print("🌐 오퍼센트 접속 중...")
         driver.get(SCRAPE_URL)
         
         wait = WebDriverWait(driver, 20)
-        
-        try:
-            # [변경됨] 특정 ul 태그 대신 body 로딩 대기 (사이트 구조가 다를 수 있으므로)
-            wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-            print(f"✅ 페이지 타이틀: {driver.title}")
-            
-            # 리스트가 렌더링될 시간을 조금 더 줍니다
-            time.sleep(3) 
-        except:
-            print("⚠️ 페이지 로딩 시간 초과 또는 차단됨")
-            print(f"현재 URL: {driver.current_url}")
+        # 페이지 본문 로딩 대기
+        wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+        time.sleep(5) # 리스트 렌더링 대기
 
-        # 스크롤 내려서 데이터 확보
+        # 스크롤 다운
         for i in range(3):
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(2)
         
-        # [변경됨] 링크 요소 탐색
+        # [수정] 오퍼센트의 채용 공고 카드는 보통 a 태그로 감싸져 있습니다.
         elements = driver.find_elements(By.TAG_NAME, "a")
-        print(f"🔍 페이지 내 전체 링크 수: {len(elements)}개")
+        print(f"🔍 탐색된 링크 수: {len(elements)}개")
 
         for elem in elements:
             try:
                 full_url = elem.get_attribute("href")
+                if not full_url or full_url == SCRAPE_URL: continue
                 
-                # [변경됨] URL 필터링 로직 수정 (원티드 /wd/ 제거)
-                # 오퍼센트 도메인이 포함되어 있거나, 상세 페이지로 추정되는 링크만 수집
-                if not full_url: continue
-                
-                # 네비게이션, 로그인 등 불필요한 링크 제외 (단순화된 로직)
-                if "login" in full_url or "signup" in full_url: continue
-                if full_url == SCRAPE_URL: continue # 자기 자신 제외
-                
+                # 텍스트 가져오기
                 raw_text = elem.text.strip()
                 if not raw_text: continue
 
+                # 줄바꿈 기준으로 텍스트 분리
                 lines = raw_text.split('\n')
-                cleaned_lines = []
-                for line in lines:
-                    text = line.strip()
-                    if not text: continue
-                    # [변경됨] 원티드 전용 제외 키워드(합격보상금 등) 제거
-                    cleaned_lines.append(text)
+                cleaned_lines = [line.strip() for line in lines if line.strip()]
                 
-                if not cleaned_lines: continue
-                    
-                # [로직 유지] 보통 첫 줄이 제목, 두 번째 줄이 회사명인 경우가 많음
-                # 사이트 구조에 따라 이 부분은 조정이 필요할 수 있습니다.
-                title = cleaned_lines[0]
-                company = ""
+                # 데이터가 너무 적으면 스킵 (최소 회사명, 제목은 있어야 함)
+                if len(cleaned_lines) < 2: continue
+
+                # [중요] 오퍼센트 구조에 맞춘 파싱 로직
+                # 보통 순서: 1.회사명 2.카테고리/빈칸 3.제목 OR 1.회사명 2.제목
+                # 예: ['파마리서치', '[경력] 이커머스 콘텐츠 마케팅', 'D-10']
+                
+                company = cleaned_lines[0] # 첫 번째 줄을 회사명으로 가정
+                title = ""
+
+                # 두 번째 줄부터 제목 찾기 (보통 두 번째 줄이 제목)
                 if len(cleaned_lines) >= 2:
-                    company = cleaned_lines[1]
-                else:
-                    # 텍스트가 한 줄뿐이라면 회사명으로 간주하거나 제목으로 처리
-                    pass 
+                    title = cleaned_lines[1]
                 
-                # 제목이 너무 짧거나(메뉴명 등), 의미 없는 데이터 필터링
-                if len(title) > 2:
-                    # 중복 방지 체크
+                # 제목 검증: 만약 2번째 줄이 카테고리(예: '마케팅')고 3번째 줄이 진짜 제목일 경우 대비
+                # 제목이 너무 짧거나(4글자 이하) 특정 단어면 다음 줄을 제목으로 봅니다.
+                if len(title) < 4 and len(cleaned_lines) >= 3:
+                     title = cleaned_lines[2]
+
+                # 제목에 대괄호 [ ] 가 포함되어 있다면 제목일 확률이 높음 (예: [경력])
+                # 혹은 회사명이 너무 길면(공고 제목이 첫 줄에 왔을 가능성) 스왑 로직 추가 가능하나,
+                # 현재는 "파마리서치"가 먼저 나오는 패턴을 우선합니다.
+
+                # 필터링: 마감일, D-Day, 지역명 등이 제목으로 들어가는 것을 방지
+                if title.startswith("D-") or "마감" in title or title.endswith("구"):
+                     if len(cleaned_lines) >= 3:
+                         title = cleaned_lines[2]
+
+                # 결과가 유효한지 확인 후 추가
+                if len(title) > 2 and len(company) > 1:
+                    # 중복 URL 체크
                     if not any(d['url'] == full_url for d in new_data):
+                        # 디버깅용 출력 (로그에서 확인 가능)
+                        # print(f"  -> 추출: {company} / {title}")
+                        
                         new_data.append({
                             'title': title,
                             'company': company,
                             'url': full_url,
                             'scraped_at': today
                         })
-            except:
-                 continue
+            except Exception:
+                continue
                 
     except Exception as e:
-        print(f"❌ 크롤링 중 에러 발생: {e}")
+        print(f"❌ 크롤링 에러: {e}")
     finally:
         driver.quit()
             
-    print(f"🎯 수집된 공고(후보): {len(new_data)}개")
+    print(f"🎯 수집된 공고: {len(new_data)}개")
+    # 샘플 데이터 3개만 출력해서 확인
+    if len(new_data) > 0:
+        print("📊 [샘플 데이터 확인]")
+        for i in range(min(3, len(new_data))):
+            print(f"   제목: {new_data[i]['title']} | 회사: {new_data[i]['company']}")
+
     return new_data
 
 def update_sheet(worksheet, data):
@@ -158,19 +162,16 @@ def update_sheet(worksheet, data):
         headers = ['title', 'company', 'url', 'scraped_at', 'status']
         worksheet.append_row(headers)
         all_values = [headers]
-        print("ℹ️ 빈 시트 감지: 헤더 행을 새로 만들었습니다.")
-    else:
-        headers = all_values[0]
-
+    
+    headers = all_values[0]
     try:
         idx_title = headers.index('title')
         idx_company = headers.index('company')
         idx_url = headers.index('url')
         idx_scraped_at = headers.index('scraped_at')
         idx_status = headers.index('status')
-    except ValueError as e:
-        missing_col = str(e).split("'")[1]
-        print(f"⛔ 헤더 오류: 시트 1행에 '{missing_col}' 컬럼이 없습니다.")
+    except:
+        print("⛔ 헤더 오류")
         return
 
     existing_urls = set()
@@ -180,13 +181,12 @@ def update_sheet(worksheet, data):
                 existing_urls.add(row[idx_url])
 
     rows_to_append = []
-    empty_row_structure = [''] * len(headers)
+    empty_row = [''] * len(headers)
 
     for item in data:
         if item['url'] in existing_urls:
             continue
-            
-        new_row = empty_row_structure.copy()
+        new_row = empty_row.copy()
         new_row[idx_title] = item['title']
         new_row[idx_company] = item['company']
         new_row[idx_url] = item['url']
@@ -196,9 +196,9 @@ def update_sheet(worksheet, data):
 
     if rows_to_append:
         worksheet.append_rows(rows_to_append)
-        print(f"💾 {len(rows_to_append)}개 신규 공고 저장 완료!")
+        print(f"💾 {len(rows_to_append)}개 저장 완료")
     else:
-        print("ℹ️ 저장할 새로운 공고가 없습니다.")
+        print("ℹ️ 신규 공고 없음")
 
 if __name__ == "__main__":
     try:
@@ -206,4 +206,4 @@ if __name__ == "__main__":
         projects = get_projects()
         update_sheet(sheet, projects)
     except Exception as e:
-        print(f"🚨 실행 실패: {e}")
+        print(f"🚨 실패: {e}")
