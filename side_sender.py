@@ -31,7 +31,7 @@ try:
 
     spreadsheet = client.open(SHEET_NAME) 
     # [주의] 5번째 탭(index 4)을 가져옵니다. 필요시 get_worksheet(0) 등으로 변경.
-    sheet = spreadsheet.get_worksheet(4) 
+    sheet = spreadsheet.get_worksheet(0) 
 
     # 데이터 가져오기
     data = sheet.get_all_values()
