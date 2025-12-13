@@ -6,6 +6,7 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from openai import OpenAI
+import time
 
 # =========================================================
 # 1. 설정 및 인증
@@ -89,14 +90,25 @@ try:
     print(f"▶ URL: {target_url}")
 
     # =========================================================
-    # 4. 웹 스크래핑
+    # 4. 웹 스크래핑 (403 에러 해결을 위한 헤더 강화)
     # =========================================================
     print("--- 스크래핑 시작 ---")
-    headers_ua = {'User-Agent': 'Mozilla/5.0'}
+    
+    # [수정됨] 봇 탐지를 피하기 위해 실제 브라우저와 똑같은 헤더 사용
+    headers_ua = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+        'Referer': 'https://www.google.com/'
+    }
     
     try:
-        response = requests.get(target_url, headers=headers_ua, timeout=10)
+        # 서핏 링크는 리다이렉트가 발생하므로 allow_redirects=True (기본값)
+        response = requests.get(target_url, headers=headers_ua, timeout=15)
         response.raise_for_status()
+        
+        # 최종 도달한 URL 확인 (리다이렉트 된 경우)
+        print(f"ℹ️ 최종 목적지 URL: {response.url}")
         
         soup = BeautifulSoup(response.text, 'html.parser')
         
@@ -111,12 +123,12 @@ try:
         full_text = " ".join(text_list)
         
         if len(full_text) < 50:
-             print("⚠️ 본문 내용이 너무 짧습니다. (스크래핑 실패 가능성)")
+             print("⚠️ 본문 내용이 너무 짧습니다. (스크래핑 실패 또는 이미지 위주 본문 가능성)")
              
         truncated_text = full_text[:3000]
         
     except Exception as e:
-        # [수정된 부분] 닫는 따옴표와 변수 처리
+        # [수정됨] 119번줄 에러 해결
         print(f"❌ 스크래핑 실패: {e}")
         exit()
 
