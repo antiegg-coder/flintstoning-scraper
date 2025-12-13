@@ -13,7 +13,8 @@ from openai import OpenAI
 SHEET_NAME = '플린트스토닝 소재 DB'
 COL_TITLE = 'title'      # 제목 컬럼 헤더명
 COL_URL = 'url'          # URL 컬럼 헤더명
-COL_STATUS = 'status'    # 상태 컬럼 헤더명 (기존 F열)
+COL_LOCATION = 'location' # [추가] 지역 컬럼 헤더명
+COL_STATUS = 'status'    # 상태 컬럼 헤더명
 COL_PUBLISH = 'publish'  # 발행 여부 컬럼 헤더명
 
 # =========================================================
@@ -29,7 +30,8 @@ try:
     client = gspread.authorize(creds)
 
     spreadsheet = client.open(SHEET_NAME) 
-    sheet = spreadsheet.sheet1
+    # [주의] 5번째 탭(index 4)을 가져옵니다. 필요시 get_worksheet(0) 등으로 변경.
+    sheet = spreadsheet.get_worksheet(4) 
 
     # 데이터 가져오기
     data = sheet.get_all_values()
@@ -44,8 +46,8 @@ try:
     # 2. 필터링 (Status: archived, Publish: TRUE)
     # =========================================================
     
-    # 필수 헤더 존재 여부 확인
-    required_cols = [COL_TITLE, COL_URL, COL_STATUS, COL_PUBLISH]
+    # 필수 헤더 존재 여부 확인 (Location 추가됨)
+    required_cols = [COL_TITLE, COL_URL, COL_LOCATION, COL_STATUS, COL_PUBLISH]
     for col in required_cols:
         if col not in df.columns:
             print(f"❌ 오류: 시트에 '{col}' 헤더가 없습니다. 헤더 이름을 확인해주세요.")
@@ -62,18 +64,20 @@ try:
     # 첫 번째 행 선택
     row = target_rows.iloc[0]
     
-    # 행 번호 계산 (헤더 1줄 + 0-based index 보정 = +2)
+    # 행 번호 계산
     update_row_index = row.name + 2
     
-    # 상태 업데이트를 위한 열 번호 계산 (헤더 리스트에서 인덱스 찾기 + 1)
-    # 이렇게 하면 열이 이동해도 헤더 이름만 같다면 안전합니다.
+    # 상태 업데이트를 위한 열 번호 계산
     status_col_index = headers.index(COL_STATUS) + 1
 
+    # 데이터 추출
     project_title = row[COL_TITLE]
+    project_location = row[COL_LOCATION] # 지역 정보 추출
     target_url = row[COL_URL]
     
     print(f"▶ 선택된 행: {update_row_index}")
     print(f"▶ 제목: {project_title}")
+    print(f"▶ 지역: {project_location}")
     print(f"▶ URL: {target_url}")
 
     # =========================================================
@@ -84,15 +88,14 @@ try:
     
     try:
         response = requests.get(target_url, headers=headers_ua, timeout=15)
-        response.raise_for_status() # 4xx, 5xx 에러 시 예외 발생
+        response.raise_for_status()
 
         soup = BeautifulSoup(response.text, 'html.parser')
         paragraphs = soup.find_all('p')
         full_text = " ".join([p.get_text() for p in paragraphs])
         
         if len(full_text) < 50:
-            # P 태그가 없거나 내용이 너무 짧은 경우 (동적 페이지 등)
-            full_text = soup.get_text() # 전체 텍스트 긁기 시도
+            full_text = soup.get_text()
 
         truncated_text = full_text[:3000].strip()
         
@@ -101,11 +104,10 @@ try:
 
     except Exception as e:
         print(f"❌ 스크래핑 실패: {e}")
-        # 스크래핑 실패 시 여기서 종료하거나, 슬랙으로 에러 메시지를 보낼 수 있습니다.
         exit()
 
     # =========================================================
-    # 4. GPT 요약
+    # 4. GPT 요약 (요약 + 추천 대상)
     # =========================================================
     print("--- GPT 요약 요청 ---")
     client_openai = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
@@ -116,8 +118,10 @@ try:
     모든 텍스트에 이모지를 절대 사용하지 마.
 
     [출력 양식]
+    *프로젝트 요약*
+    (프로젝트의 핵심 내용을 2~3문장으로 요약)
 
-    *이런 분께 추천해요*
+    *이런 분을 찾고 있어요*
     - (추천 대상 1)
     - (추천 대상 2)
 
@@ -135,18 +139,28 @@ try:
 
     gpt_body = completion.choices[0].message.content
 
-    final_message = f"*추천 프로젝트*\n<{target_url}|{project_title}>\n\n{gpt_body}"
-    final_message_with_link = f"{final_message}\n\n🔗 <{target_url}|모집공고 바로가기>"
+    # =========================================================
+    # 5. 슬랙 전송 (메시지 포맷 수정됨)
+    # =========================================================
+    
+    # [메시지 구성 요구사항 반영]
+    # 1. 첫 줄: <사이드프로젝트 동료 찾고 있어요>
+    # 2. 순서: 공고명, 지역, 프로젝트 요약, 이런 분..., URL
+    # 3. URL: <URL|바로가기> 형태
+    
+    final_message = f"<사이드프로젝트 동료 찾고 있어요>\n\n" \
+                    f"*{project_title}*\n\n" \
+                    f"*지역:* {project_location}\n\n" \
+                    f"{gpt_body}\n\n" \
+                    f"🔗 <{target_url}|게시글 바로가기>"
     
     print("--- 최종 결과물 생성 완료 ---")
+    print(final_message)
 
-    # =========================================================
-    # 5. 슬랙 전송 & 시트 업데이트
-    # =========================================================
     print("--- 슬랙 전송 시작 ---")
     
     webhook_url = os.environ['SLACK_WEBHOOK_URL']
-    payload = {"text": final_message_with_link}
+    payload = {"text": final_message}
     
     slack_res = requests.post(webhook_url, json=payload)
     
@@ -155,12 +169,10 @@ try:
         
         try:
             print(f"▶ 시트 상태 업데이트 중... (행: {update_row_index}, 열: {status_col_index})")
-            # 헤더 이름으로 찾은 정확한 열 위치 업데이트
             sheet.update_cell(update_row_index, status_col_index, 'published')
             print("✅ 상태 변경 완료 (archived -> published)")
         except Exception as e:
             print(f"⚠️ 상태 업데이트 실패: {e}")
-            # 참고: 업데이트 실패해도 슬랙은 이미 갔으므로 치명적이지 않음
             
     else:
         print(f"❌ 전송 실패 (상태 코드: {slack_res.status_code})")
