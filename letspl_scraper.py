@@ -15,11 +15,17 @@ from selenium.webdriver.support import expected_conditions as EC
 
 # 1. 설정
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1nKPVCZ6zAOfpqCjV6WfjkzCI55FA9r2yvi9XL3iIneo/edit"
-TARGET_GID = 1669656972  # 시트 탭 GID
-# [수정됨] 렛플(Letspl) 검색 결과 URL
+TARGET_GID = 1669656972 
 SCRAPE_URL = "https://letspl.me/project?location=KR00&type=00&recruitingType=all&jobD=0207&skill=&interest=&keyword="
 
+# [수정됨] 감지할 지역 키워드 리스트 정의
+REGION_KEYWORDS = [
+    "서울", "경기", "인천", "대전", "대구", "부산", "광주", "울산", "세종", 
+    "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주", "온라인"
+]
+
 def get_google_sheet():
+    # ... (기존과 동일)
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds_dict = json.loads(os.environ['GOOGLE_CREDENTIALS'])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
@@ -40,6 +46,7 @@ def get_google_sheet():
     return worksheet
 
 def get_driver():
+    # ... (기존과 동일)
     chrome_options = Options()
     chrome_options.add_argument("--headless") 
     chrome_options.add_argument("--no-sandbox")
@@ -61,16 +68,11 @@ def get_projects():
         print("🌐 Letspl 접속 중...")
         driver.get(SCRAPE_URL)
         
-        # [수정됨] 스마트 대기: 프로젝트 리스트가 뜰 때까지 최대 15초 대기
-        # 렛플은 링크(a) 태그의 href가 '/project/'로 시작함
         wait = WebDriverWait(driver, 15)
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "a[href^='/project/']")))
         
-        # 약간의 추가 로딩 대기 (이미지/텍스트 렌더링)
         time.sleep(3)
         
-        # [수정됨] CSS Selector로 프로젝트 링크만 정확히 타겟팅
-        # href 속성이 '/project/'로 시작하는 모든 a 태그 수집
         elements = driver.find_elements(By.CSS_SELECTOR, "a[href^='/project/']")
         print(f"🔍 발견된 프로젝트 링크 수: {len(elements)}개")
 
@@ -78,48 +80,49 @@ def get_projects():
             try:
                 full_url = elem.get_attribute("href")
                 
-                # ----------------------------------------------------
-                # [필터링 로직]
-                # 1. 실제 프로젝트 상세 링크인지 확인 (숫자 ID가 포함되어야 함)
-                # 예: https://letspl.me/project/1234/제목 -> OK
-                # 예: https://letspl.me/project -> NO (상단 메뉴바 등)
                 if not re.search(r'/project/\d+', full_url):
                     continue
                 
-                # 2. 제목 추출
-                # 렛플은 a 태그 안에 텍스트가 여러 개(상태, 인원 등) 섞여 있음.
-                # 보통 가장 긴 텍스트나, 줄바꿈으로 나눴을 때 핵심 문구가 제목임.
                 raw_text = elem.text.strip()
                 if not raw_text:
                     continue
 
                 lines = raw_text.split('\n')
-                # 불필요한 태그 텍스트 제거 ('모집중', '프로젝트', '새로운' 등)
                 cleaned_lines = [
                     line.strip() for line in lines 
-                    if len(line.strip()) > 2  # 너무 짧은 단어 제외
+                    if len(line.strip()) > 2 
                     and "모집" not in line
                     and "스크랩" not in line
                 ]
                 
+                # 1. 제목 추출 (기존 로직)
                 if cleaned_lines:
-                     # 보통 첫 번째나 두 번째 의미 있는 줄이 제목일 확률이 높음
-                     # 여기서는 가장 긴 줄을 제목으로 채택 (기존 로직 유지하되 안전장치)
                     title = max(cleaned_lines, key=len)
                 else:
                     title = raw_text
-                # ----------------------------------------------------
+                
+                # [수정됨] 2. 지역 정보 추출 로직
+                # 텍스트 라인 중 지역 키워드가 포함된 줄을 찾음
+                location = "미정" # 기본값
+                for line in lines:
+                    # 라인에 키워드가 포함되어 있는지 확인 (예: "서울 관악구")
+                    for keyword in REGION_KEYWORDS:
+                        if keyword in line:
+                            location = keyword # 가장 먼저 발견된 키워드를 지역으로 설정
+                            break
+                    if location != "미정":
+                        break
 
-                # 중복 체크 및 데이터 추가
+                # 데이터 저장
                 if len(title) > 2:
                     if not any(d['url'] == full_url for d in new_data):
                         new_data.append({
                             'title': title,
                             'url': full_url,
-                            'scraped_at': today
+                            'scraped_at': today,
+                            'location': location  # [수정됨] 지역 정보 추가
                         })
             except Exception as e:
-                # 개별 요소 에러는 무시하고 계속 진행
                 continue
                 
     except Exception as e:
@@ -131,21 +134,26 @@ def get_projects():
     return new_data
 
 def update_sheet(worksheet, data):
-    # (이 함수는 기존과 동일하게 유지)
     all_values = worksheet.get_all_values()
     
     if not all_values:
-        headers = []
-    else:
-        headers = all_values[0]
+        # 헤더가 아예 없는 경우 생성
+        headers = ['title', 'url', 'scraped_at', 'status', 'location']
+        worksheet.append_row(headers)
+        all_values = [headers]
+    
+    headers = all_values[0]
 
     try:
         idx_title = headers.index('title')
         idx_url = headers.index('url')
         idx_scraped_at = headers.index('scraped_at')
         idx_status = headers.index('status')
-    except ValueError:
-        print("⛔ 헤더 오류: 시트 1행에 title, url, scraped_at, status 가 있어야 합니다.")
+        # [수정됨] location 컬럼 인덱스 찾기
+        idx_location = headers.index('location') 
+    except ValueError as e:
+        print(f"⛔ 헤더 오류: 시트 1행에 {e} 컬럼이 있어야 합니다.")
+        print("💡 팁: 구글 시트 1행에 'location' 이라고 적힌 셀을 추가해주세요.")
         return
 
     existing_urls = set()
@@ -158,11 +166,15 @@ def update_sheet(worksheet, data):
         if item['url'] in existing_urls:
             continue
             
+        # 빈 행 생성 (헤더 길이만큼)
         new_row = [''] * len(headers)
+        
+        # 값 매핑
         new_row[idx_title] = item['title']
         new_row[idx_url] = item['url']
         new_row[idx_scraped_at] = item['scraped_at']
         new_row[idx_status] = 'archived'
+        new_row[idx_location] = item['location'] # [수정됨] 지역 값 입력
         
         rows_to_append.append(new_row)
 
