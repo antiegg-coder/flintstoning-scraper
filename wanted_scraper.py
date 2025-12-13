@@ -16,9 +16,11 @@ from selenium.webdriver.support import expected_conditions as EC
 # 1. 설정
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1nKPVCZ6zAOfpqCjV6WfjkzCI55FA9r2yvi9XL3iIneo/edit"
 
-# ▼ 원티드 탭 GID (확인 필수)
-TARGET_GID = 639559541
-SCRAPE_URL = "https://www.wanted.co.kr/wdlist/523/1635?country=kr&job_sort=job.popularity_order&years=-1&locations=all"
+# ▼ 원티드 탭 GID (확인 필수 - 오퍼센트용으로 시트를 새로 판다면 변경 필요)
+TARGET_GID = 639559541 
+
+# [변경됨] 스크래핑 대상 URL: 오퍼센트
+SCRAPE_URL = "https://offercent.co.kr/company-list?jobCategories=0040002%2C0170004"
 
 def get_google_sheet():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
@@ -47,7 +49,7 @@ def get_driver():
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
     
-    # [중요] 봇 탐지 우회 설정 추가
+    # [중요] 봇 탐지 우회 설정
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option("useAutomationExtension", False)
@@ -57,7 +59,7 @@ def get_driver():
     
     driver = webdriver.Chrome(options=chrome_options)
     
-    # navigator.webdriver 속성을 숨김 (봇 탐지 방지)
+    # navigator.webdriver 속성을 숨김
     driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
     
     return driver
@@ -68,34 +70,42 @@ def get_projects():
     today = datetime.now().strftime("%Y-%m-%d")
 
     try:
-        print("🌐 원티드(Wanted) 접속 중...")
+        print("🌐 오퍼센트(Offercent) 접속 중...")
         driver.get(SCRAPE_URL)
         
-        # [중요] 단순 time.sleep 대신, 특정 요소가 뜰 때까지 스마트하게 대기
-        # 'job-card' 클래스나 공고 목록이 뜰 때까지 최대 20초 대기
         wait = WebDriverWait(driver, 20)
         
         try:
-            # 원티드 공고 리스트가 로딩될 때까지 기다림 (태그명 'ul'이나 'a'가 확실히 뜰 때까지)
-            wait.until(EC.presence_of_element_located((By.TAG_NAME, "ul")))
-            print(f"✅ 페이지 타이틀: {driver.title}") # 디버깅용: 타이틀이 제대로 나오는지 확인
+            # [변경됨] 특정 ul 태그 대신 body 로딩 대기 (사이트 구조가 다를 수 있으므로)
+            wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+            print(f"✅ 페이지 타이틀: {driver.title}")
+            
+            # 리스트가 렌더링될 시간을 조금 더 줍니다
+            time.sleep(3) 
         except:
             print("⚠️ 페이지 로딩 시간 초과 또는 차단됨")
             print(f"현재 URL: {driver.current_url}")
 
-        # 스크롤 3번 내려서 데이터 확보
+        # 스크롤 내려서 데이터 확보
         for i in range(3):
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(2)
         
+        # [변경됨] 링크 요소 탐색
         elements = driver.find_elements(By.TAG_NAME, "a")
         print(f"🔍 페이지 내 전체 링크 수: {len(elements)}개")
 
         for elem in elements:
             try:
                 full_url = elem.get_attribute("href")
-                if not full_url or "/wd/" not in full_url:
-                    continue
+                
+                # [변경됨] URL 필터링 로직 수정 (원티드 /wd/ 제거)
+                # 오퍼센트 도메인이 포함되어 있거나, 상세 페이지로 추정되는 링크만 수집
+                if not full_url: continue
+                
+                # 네비게이션, 로그인 등 불필요한 링크 제외 (단순화된 로직)
+                if "login" in full_url or "signup" in full_url: continue
+                if full_url == SCRAPE_URL: continue # 자기 자신 제외
                 
                 raw_text = elem.text.strip()
                 if not raw_text: continue
@@ -105,20 +115,24 @@ def get_projects():
                 for line in lines:
                     text = line.strip()
                     if not text: continue
-                    if "합격보상금" in text or "보상금" in text: continue
-                    if text.endswith("원") and any(c.isdigit() for c in text): continue
-                    if "응답률" in text or "입사축하금" in text or "지역" in text: continue
+                    # [변경됨] 원티드 전용 제외 키워드(합격보상금 등) 제거
                     cleaned_lines.append(text)
                 
                 if not cleaned_lines: continue
                     
+                # [로직 유지] 보통 첫 줄이 제목, 두 번째 줄이 회사명인 경우가 많음
+                # 사이트 구조에 따라 이 부분은 조정이 필요할 수 있습니다.
                 title = cleaned_lines[0]
                 company = ""
                 if len(cleaned_lines) >= 2:
                     company = cleaned_lines[1]
+                else:
+                    # 텍스트가 한 줄뿐이라면 회사명으로 간주하거나 제목으로 처리
+                    pass 
                 
-                idx_match = re.search(r'/wd/(\d+)', full_url)
-                if len(title) > 1 and idx_match:
+                # 제목이 너무 짧거나(메뉴명 등), 의미 없는 데이터 필터링
+                if len(title) > 2:
+                    # 중복 방지 체크
                     if not any(d['url'] == full_url for d in new_data):
                         new_data.append({
                             'title': title,
@@ -134,7 +148,7 @@ def get_projects():
     finally:
         driver.quit()
             
-    print(f"🎯 수집된 공고: {len(new_data)}개")
+    print(f"🎯 수집된 공고(후보): {len(new_data)}개")
     return new_data
 
 def update_sheet(worksheet, data):
