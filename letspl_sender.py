@@ -58,14 +58,23 @@ try:
     print(f"▶ 선택된 행 번호: {update_row_index}")
 
     # =========================================================
-    # 3. 데이터 추출 (A열: 제목, C열: URL)
+    # 3. 데이터 추출
     # =========================================================
     
-    # 위치 기반 추출 (A열=0, C열=2)
+    # A열(제목), C열(URL)은 기존 위치 유지 (필요 시 이것도 헤더명으로 변경 가능)
     project_title = row.iloc[0]
     target_url = row.iloc[2]
     
+    # [수정] 'location' 헤더 이름으로 지역 정보 가져오기
+    # 엑셀 파일의 헤더에 'location' 이라고 적혀 있어야 합니다.
+    try:
+        project_location = row['location']
+    except KeyError:
+        print("⚠️ 'location' 헤더를 찾을 수 없습니다. 컬럼명을 확인해주세요.")
+        project_location = "지역 정보 없음"
+
     print(f"▶ 제목: {project_title}")
+    print(f"▶ 지역: {project_location}")
     print(f"▶ URL: {target_url}")
 
     # =========================================================
@@ -90,14 +99,17 @@ try:
     print("--- GPT 요약 요청 ---")
     client_openai = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
 
+    # 프롬프트: '프로젝트 요약'과 '이런 분을 찾고 있어요' 두 파트로 분리 요청
     gpt_prompt = f"""
     너는 채용 공고나 프로젝트 정보를 정리해주는 '전문 에디터'야.
     아래 [글 내용]을 읽고, 지정된 **출력 양식**을 엄격하게 지켜서 답변해.
     모든 텍스트에 이모지를 절대 사용하지 마.
 
     [출력 양식]
+    *프로젝트 요약*
+    (프로젝트의 핵심 내용을 2~3문장으로 요약)
 
-    *이런 분께 추천해요*
+    *이런 분을 찾고 있어요*
     - (추천 대상 1)
     - (추천 대상 2)
 
@@ -113,28 +125,30 @@ try:
         ]
     )
 
-    # 1. GPT 응답 내용 가져오기
     gpt_body = completion.choices[0].message.content
 
-    # 2. [중요] final_message를 먼저 정의해야 합니다!
-    final_message = f"*추천 프로젝트*\n<{target_url}|{project_title}>\n\n{gpt_body}"
+    # =========================================================
+    # 6. 슬랙 전송
+    # =========================================================
     
-    # 3. 그 다음, 링크와 이모지를 추가합니다.
-    final_message_with_link = f"{final_message}\n\n🔗 <{target_url}|모집공고 바로가기>"
+    # [최종 메시지 조립]
+    # 1. 헤더: <사이드프로젝트 동료 찾고 있어요>
+    # 2. 정보: 공고명, 지역
+    # 3. 내용: GPT 요약 내용
+    # 4. 링크: '아티클 바로가기' 텍스트에 URL 적용
+    
+    final_message = f"<사이드프로젝트 동료 찾고 있어요>\n\n" \
+                    f"{project_title}\n" \
+                    f"*지역:* {project_location}\n\n" \
+                    f"{gpt_body}\n\n" \
+                    f"🔗 <{target_url}|게시글 바로가기>"
     
     print("--- 최종 결과물 ---")
-    print(final_message_with_link)
+    print(final_message)
 
-
-    # =========================================================
-    # 6. 슬랙 전송 & 시트 업데이트 (published 처리)
-    # =========================================================
     print("--- 슬랙 전송 시작 ---")
-    
     webhook_url = os.environ['SLACK_WEBHOOK_URL']
-    
-    # 4. 전송할 때는 링크가 포함된 변수(final_message_with_link)를 사용
-    payload = {"text": final_message_with_link}
+    payload = {"text": final_message}
     
     slack_res = requests.post(webhook_url, json=payload)
     
