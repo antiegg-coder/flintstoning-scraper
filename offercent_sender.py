@@ -195,7 +195,7 @@ def main():
         slack_message += f"*기업명:* {company_name}\n"
         slack_message += f"*연차:* {extracted_exp}\n\n"
         slack_message += f"*요약*\n{extracted_summary}\n\n"
-        slack_message += f":링크:<{target_url}|공고 바로가기>"
+        slack_message += f"🔗 <{target_url}|공고 바로가기>"
 
         print("--- 최종 메시지 미리보기 ---")
         print(slack_message)
