@@ -1,171 +1,81 @@
-import time
-import re
-import os
-import json
+import os, time, json, re
 import gspread
 from datetime import datetime
 from oauth2client.service_account import ServiceAccountCredentials
-
-# 셀레니움 관련
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-# 1. 설정
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1nKPVCZ6zAOfpqCjV6WfjkzCI55FA9r2yvi9XL3iIneo/edit"
-TARGET_GID = 981623942  # Mix 탭 GID
-SCRAPE_URL = "https://mix.day/"
+# [설정] 이 파일 전용 정보
+CONFIG = {
+    "name": "Mix.day",
+    "url": "https://mix.day/",
+    "gid": "981623942" # Mix 탭
+}
 
-def get_google_sheet():
+# [공통] 시트 연결 (GID로 찾기)
+def get_worksheet():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds_dict = json.loads(os.environ['GOOGLE_CREDENTIALS'])
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
-    
-    spreadsheet = client.open_by_url(SHEET_URL)
-    worksheet = None
-    
-    for sheet in spreadsheet.worksheets():
-        if str(sheet.id) == str(TARGET_GID):
-            worksheet = sheet
-            break
-            
-    if worksheet is None:
-        raise Exception(f"GID가 {TARGET_GID}인 시트를 찾을 수 없습니다.")
-    
-    print(f"📂 연결된 시트: {worksheet.title}")
-    return worksheet
+    spreadsheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1nKPVCZ6zAOfpqCjV6WfjkzCI55FA9r2yvi9XL3iIneo/edit")
+    # 순서가 바뀌어도 ID로 탭을 찾음
+    sheet = next((s for s in spreadsheet.worksheets() if str(s.id) == CONFIG["gid"]), None)
+    if not sheet: raise Exception(f"{CONFIG['gid']} 시트를 못 찾았습니다.")
+    return sheet
 
+# [공통] 브라우저 실행
 def get_driver():
-    chrome_options = Options()
-    chrome_options.add_argument("--headless") 
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--window-size=1920,1080")
-    
-    # 봇 차단 회피
-    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    chrome_options.add_argument(f"user-agent={user_agent}")
-    
-    driver = webdriver.Chrome(options=chrome_options)
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    driver = webdriver.Chrome(options=options)
+    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"})
     return driver
 
-def get_projects():
+# [전용] 데이터 수집
+def scrape_projects():
     driver = get_driver()
     new_data = []
     today = datetime.now().strftime("%Y-%m-%d")
-
     try:
-        print("🌐 Mix.day 접속 중...")
-        driver.get(SCRAPE_URL)
-        
-        # 화면 로딩 대기
-        time.sleep(10)
-        
-        elements = driver.find_elements(By.TAG_NAME, "a")
-        print(f"🔍 페이지 내 전체 링크 수: {len(elements)}개")
-
-        for elem in elements:
-            try:
-                full_url = elem.get_attribute("href")
-                
-                # 텍스트 전체 가져오기
-                raw_text = elem.text.strip()
-                
-                if not full_url or not raw_text:
-                    continue
-                
-                # ----------------------------------------------------
-                # [제목 정제 로직]
-                lines = raw_text.split('\n')
-                
-                # 불필요한 줄 제거
-                cleaned_lines = [
-                    line.strip() for line in lines 
-                    if "Ambassador" not in line       
-                    and "·" not in line               
-                    and len(line.strip()) > 0         
-                ]
-                
-                # 가장 긴 줄을 제목으로 선택
-                if cleaned_lines:
-                    title = max(cleaned_lines, key=len)
-                else:
-                    title = raw_text 
-                # ----------------------------------------------------
-
-                # 필터링: 제목 길이 10 이상, http 링크 포함
-                if len(title) > 10 and "http" in full_url:
-                    
-                    if not any(d['url'] == full_url for d in new_data):
-                        if "로그인" in title or "회원가입" in title:
-                            continue
-
-                        new_data.append({
-                            'title': title,
-                            'url': full_url,
-                            'scraped_at': today
-                        })
-            except:
-                continue
-                
-    except Exception as e:
-        print(f"❌ 에러 발생: {e}")
-    finally:
-        driver.quit()
+        driver.get(CONFIG["url"])
+        time.sleep(10) # 충분한 로딩 대기
+        for elem in driver.find_elements(By.TAG_NAME, "a"):
+            url = elem.get_attribute("href")
+            text = elem.text.strip()
+            if not url or not text or "http" not in url: continue
             
-    print(f"🎯 정제된 게시물: {len(new_data)}개")
+            lines = [l.strip() for l in text.split('\n') if "Ambassador" not in l and "·" not in l and l.strip()]
+            title = max(lines, key=len) if lines else text # 가장 긴 줄을 제목으로
+            
+            if len(title) > 10 and "로그인" not in title:
+                if not any(d['url'] == url for d in new_data):
+                    new_data.append({'title': title, 'url': url, 'scraped_at': today})
+    finally: driver.quit()
     return new_data
 
-def update_sheet(worksheet, data):
-    all_values = worksheet.get_all_values()
+# [공통] 스마트 저장 (헤더 이름 기준)
+def update_sheet(ws, data):
+    if not data: return print(f"[{CONFIG['name']}] 새 공고 없음")
+    all_v = ws.get_all_values()
+    headers = all_v[0] if all_v else ['title', 'url', 'scraped_at', 'status', 'location']
+    col_map = {name: i for i, name in enumerate(headers)}
+    existing_urls = {row[col_map['url']] for row in all_v[1:] if len(row) > col_map['url']}
     
-    if not all_values:
-        headers = []
-    else:
-        headers = all_values[0]
-
-    try:
-        idx_title = headers.index('title')
-        idx_url = headers.index('url')
-        idx_scraped_at = headers.index('scraped_at')
-        idx_status = headers.index('status')
-    except ValueError:
-        print("⛔ 헤더 오류: 시트 1행에 title, url, scraped_at, status 가 있어야 합니다.")
-        return
-
-    existing_urls = set()
-    for row in all_values[1:]:
-        if len(row) > idx_url:
-            existing_urls.add(row[idx_url])
-
-    rows_to_append = []
+    rows = []
     for item in data:
-        if item['url'] in existing_urls:
-            continue
-            
-        new_row = [''] * len(headers)
-        new_row[idx_title] = item['title']
-        new_row[idx_url] = item['url']
-        new_row[idx_scraped_at] = item['scraped_at']
-        
-        # [수정됨] 무조건 'archived'로 저장
-        new_row[idx_status] = 'archived'
-        
-        rows_to_append.append(new_row)
-
-    if rows_to_append:
-        worksheet.append_rows(rows_to_append)
-        print(f"💾 {len(rows_to_append)}개 저장 완료!")
-    else:
-        print("ℹ️ 새로운 게시물이 없습니다.")
+        if item['url'] in existing_urls: continue
+        row = [''] * len(headers)
+        for k, v in item.items():
+            if k in col_map: row[col_map[k]] = v
+        if 'status' in col_map: row[col_map['status']] = 'archived'
+        rows.append(row)
+    
+    if rows: ws.append_rows(rows); print(f"💾 {CONFIG['name']} {len(rows)}건 저장")
 
 if __name__ == "__main__":
-    try:
-        sheet = get_google_sheet()
-        projects = get_projects()
-        update_sheet(sheet, projects)
-    except Exception as e:
-        print(f"🚨 실행 실패: {e}")
+    ws = get_worksheet(); data = scrape_projects(); update_sheet(ws, data)
