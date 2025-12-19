@@ -36,27 +36,50 @@ def get_driver():
     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"})
     return driver
 
-# [전용] 데이터 수집
 def scrape_projects():
     driver = get_driver()
     new_data = []
     today = datetime.now().strftime("%Y-%m-%d")
+    
     try:
         driver.get(CONFIG["url"])
-        time.sleep(5)
-        for _ in range(3): # 스크롤 3회
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(1)
-        
-        for art in driver.find_elements(By.CSS_SELECTOR, "a"):
-            title = art.text.strip()
-            link = art.get_attribute("href")
-            if link and title and len(title) > 10 and "로그인" not in title:
-                if not any(d['url'] == link for d in new_data):
-                    new_data.append({'title': title, 'url': link, 'scraped_at': today})
-    finally: driver.quit()
-    return new_data
+        # 메인 콘텐츠 영역이 나타날 때까지 대기
+        wait = WebDriverWait(driver, 10)
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "article.ct-item")))
 
+        # 스크롤 로직 (필요에 따라 횟수 조절)
+        for _ in range(3):
+            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+            time.sleep(1.5)
+        
+        # 콘텐츠 카드 수집
+        articles = driver.find_elements(By.CSS_SELECTOR, "article.ct-item")
+        
+        for art in articles:
+            try:
+                # 카드 내부에서 제목과 링크가 있는 클래스명 'title'인 a 태그 추출
+                title_element = art.find_element(By.CSS_SELECTOR, "a.title")
+                title = title_element.text.strip()
+                link = title_element.get_attribute("href")
+
+                if title and link:
+                    # 중복 체크 후 리스트 추가
+                    if not any(d['url'] == link for d in new_data):
+                        new_data.append({
+                            'title': title, 
+                            'url': link, 
+                            'scraped_at': today
+                        })
+            except Exception as e:
+                # 썸네일만 있고 제목이 없는 특수 케이스 등을 대비해 패스
+                continue
+
+    finally: 
+        driver.quit()
+    
+    print(f"🔎 총 {len(new_data)}개의 유효 콘텐츠 발견")
+    return new_data
+    
 # [공통] 스마트 저장 (헤더 이름 기준)
 def update_sheet(ws, data):
     if not data: return print(f"[{CONFIG['name']}] 새 공고 없음")
