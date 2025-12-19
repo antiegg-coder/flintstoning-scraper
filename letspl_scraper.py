@@ -35,7 +35,7 @@ def get_driver():
     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"})
     return driver
 
-# [전용] 데이터 수집 (로직 수정 완료)
+# [전용] 데이터 수집 (캐로셀 제외 및 이전 로직 복구)
 def scrape_projects():
     driver = get_driver()
     new_data = []
@@ -53,28 +53,31 @@ def scrape_projects():
 
         for elem in cards:
             try:
+                # 1. 캐로셀(주목중) 카드인지 먼저 확인해서 제외하기
+                # 캐로셀 카드는 클래스명에 'Comment'나 'newProject' 문구가 포함되어 있습니다.
+                card_class = elem.get_attribute("class")
+                if "Comment" in card_class or "newProject" in card_class:
+                    continue
+
                 href = elem.get_attribute("href")
                 if not re.search(r'/project/\d+', href): continue
                 
-                # ----------------------------------------------------
-                # [핵심 수정] 클래스명에 'ProjectTitle'이 들어간 요소를 최우선으로 찾음
-                # ----------------------------------------------------
+                # 2. 이전의 안정적인 제목 찾기 로직으로 복구
                 title = ""
                 try:
-                    # 상단 캐로셀 카드든 일반 카드든 'ProjectTitle' 클래스는 공통으로 사용됨
-                    title_elem = elem.find_element(By.CSS_SELECTOR, "[class*='ProjectTitle']")
+                    h3_elem = elem.find_element(By.TAG_NAME, "h3")
+                    # 클래스명에 TitleTxt가 들어간 span을 찾음
+                    title_elem = h3_elem.find_element(By.CSS_SELECTOR, "span[class*='TitleTxt']")
                     title = title_elem.text.strip()
                 except:
-                    # 제목 요소를 못 찾았을 때만 비상 로직 작동
-                    BAD_WORDS = ["팔로우", "주목중", "D-", "NEW", "렛플이"]
+                    # h3 구조가 아닐 경우를 대비한 최소한의 백업
+                    BAD_WORDS = ["팔로우", "주목중", "D-", "NEW"]
                     lines = elem.text.split('\n')
                     clean_lines = [l.strip() for l in lines if len(l.strip()) > 1 
                                    and not any(bad in l for bad in BAD_WORDS)]
                     if clean_lines: title = clean_lines[0]
 
-                # 제목이 너무 짧거나(오류), 너무 길면(댓글 등) 수집 제외 (데이터 품질 관리)
-                if not title or len(title) < 2 or len(title) > 50: continue
-                # ----------------------------------------------------
+                if not title or len(title) < 2: continue
 
                 loc = next((k for k in REGIONS if k in elem.text), "미정")
                 
