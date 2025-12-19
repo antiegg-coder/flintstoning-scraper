@@ -36,49 +36,28 @@ def get_driver():
     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"})
     return driver
 
-# [전용] 데이터 수집
-def scrape_projects():
-    driver = get_driver()
-    new_data = []
-    today = datetime.now().strftime("%Y-%m-%d")
-    urls_check = set()
-    
-    try:
-        driver.get(CONFIG["url"])
-        
-        # [해결] 특정 공고 요소 대신 'body' 태그가 나타나면 즉시 진행
-        wait = WebDriverWait(driver, 15)
-        try:
-            wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
-        except:
-            # 타임아웃이 나더라도 중단하지 않고 수집 시도
-            pass
+for card in cards:
+            href = card.get_attribute("href")
+            if not href or "/job/" not in href: continue
             
-        # 동적 콘텐츠가 로드될 수 있도록 최소한의 물리적 시간 부여
-        time.sleep(5)
+            try:
+                # 'body-02' 변형을 가진 모든 span 요소를 순서대로 가져옴
+                elements = card.find_elements(By.CSS_SELECTOR, 'span[data-variant="body-02"]')
+                if not elements: continue
 
-        for _ in range(10):
-            cards = driver.find_elements(By.TAG_NAME, "a")
-            for card in cards:
-                href = card.get_attribute("href")
-                if not href or "/job/" not in href: continue
+                # 리스트의 첫 번째 요소는 회사명, 그 이후는 공고 제목들로 간주
+                # (보내주신 구조상 회사명이 항상 상단에 위치함)
+                texts = [el.text.strip() for el in elements if el.text.strip()]
                 
-                try:
-                    all_spans = card.find_elements(By.CSS_SELECTOR, "span.greet-typography")
-                    company = ""
-                    title_list = []
+                if len(texts) >= 2:
+                    company = texts[0]  # 예: 엠피엠지(MPMG)
+                    titles = texts[1:]  # 그 외 모든 텍스트는 공고 제목 리스트
                     
-                    for s in all_spans:
-                        cls = s.get_attribute("class") or ""
-                        txt = s.text.strip()
-                        if not txt or "채용 중인 공고" in txt: continue
+                    for title in titles:
+                        # '6일 전', '1개월 이상' 같은 칩(Chip) 데이터와 섞이지 않도록 필터링
+                        # 보통 날짜 정보는 span이 아닌 다른 태그나 클래스에 있지만, 안전을 위해 체크
+                        if "전" in title or "개월" in title or "일" in title: continue
                         
-                        if "xlyipyv" in cls:
-                            title_list.append(txt)
-                        elif not company:
-                            company = txt
-
-                    for title in title_list:
                         data_id = f"{href}_{title}"
                         if data_id not in urls_check:
                             new_data.append({
@@ -88,16 +67,8 @@ def scrape_projects():
                                 'scraped_at': today
                             })
                             urls_check.add(data_id)
-                except:
-                    continue
-            
-            # 스크롤 후 콘텐츠 로딩 대기
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(3) 
-
-    finally: 
-        driver.quit()
-    return new_data
+            except Exception as e:
+                continue
     
 # [공통] 스마트 저장 (헤더 이름 기준)
 def update_sheet(ws, data):
