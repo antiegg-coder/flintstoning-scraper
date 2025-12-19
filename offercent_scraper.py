@@ -36,7 +36,7 @@ def get_driver():
     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"})
     return driver
 
-# [전용] 데이터 수집 (타임아웃 해결 버전)
+# [전용] 데이터 수집
 def scrape_projects():
     driver = get_driver()
     new_data = []
@@ -46,14 +46,15 @@ def scrape_projects():
     try:
         driver.get(CONFIG["url"])
         
-        # [수정] 엄격한 요소 대기 대신 페이지 body가 로드되면 즉시 진행
+        # [해결] 특정 공고 요소 대신 'body' 태그가 나타나면 즉시 진행
         wait = WebDriverWait(driver, 15)
         try:
             wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
         except:
-            print("⚠️ 페이지 로딩 지연 중이나 수집을 시도합니다.")
+            # 타임아웃이 나더라도 중단하지 않고 수집 시도
+            pass
             
-        # 데이터가 렌더링될 최소한의 시간 확보
+        # 동적 콘텐츠가 로드될 수 있도록 최소한의 물리적 시간 부여
         time.sleep(5)
 
         for _ in range(10):
@@ -90,7 +91,7 @@ def scrape_projects():
                 except:
                     continue
             
-            # 스크롤 후 대기 시간 확보 (누락 방지)
+            # 스크롤 후 콘텐츠 로딩 대기
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(3) 
 
