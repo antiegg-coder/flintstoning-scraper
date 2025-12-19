@@ -40,7 +40,7 @@ def scrape_projects():
     driver = get_driver()
     new_data = []
     today = datetime.now().strftime("%Y-%m-%d")
-    REGIONS = ["서울", "경기", "인천", "대전", "대구", "부산", "광주", "울산", "세종", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주", "온라인", "지역무관]
+    REGIONS = ["서울", "경기", "인천", "대전", "대구", "부산", "광주", "울산", "세종", "강원", "충북", "충남", "전북", "전남", "경북", "경남", "제주", "온라인", "지역무관"]
 
     try:
         print(f"🌐 {CONFIG['name']} 접속 중...")
@@ -53,8 +53,6 @@ def scrape_projects():
 
         for elem in cards:
             try:
-                # 1. 캐로셀(주목중) 카드인지 먼저 확인해서 제외하기
-                # 캐로셀 카드는 클래스명에 'Comment'나 'newProject' 문구가 포함되어 있습니다.
                 card_class = elem.get_attribute("class")
                 if "Comment" in card_class or "newProject" in card_c정")
                 
