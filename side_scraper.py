@@ -54,13 +54,21 @@ def scrape_projects():
                 text = elem.text.strip()
                 if not text: continue
                 
-                loc = next((k for k in regions if k in text), "미정")
+                # 지역을 찾으면 해당 지역명을, 못 찾으면 빈 문자열("")을 할당합니다.
+                loc = next((k for k in regions if k in text), "") 
+                
                 idx = re.search(r'idx=(\d+)', href).group(1)
                 full_url = f"https://sideproject.co.kr/projects/?bmode=view&idx={idx}"
                 
                 if not any(d['url'] == full_url for d in new_data):
-                    new_data.append({'title': text.split('\n')[0], 'url': full_url, 'scraped_at': today, 'location': loc})
-    finally: driver.quit()
+                    new_data.append({
+                        'title': text.split('\n')[0], 
+                        'url': full_url, 
+                        'scraped_at': today, 
+                        'location': loc
+                    })
+    finally: 
+        driver.quit()
     return new_data
 
 # [공통] 스마트 저장 (헤더 이름 기준)
