@@ -33,7 +33,11 @@ def get_driver():
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    # [핵심 추가] 진짜 사람 크롬 브라우저인 것처럼 속이는 가짜 정보
+    
+    # [핵심 수정] 화면 크기를 PC 규격(1920x1080)으로 강제 설정합니다.
+    # 이렇게 하면 사진 속의 모바일 화면이 아닌, 우리가 처음에 본 PC 화면이 뜹니다.
+    options.add_argument("--window-size=1920,1080")
+    
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
     options.add_argument("--disable-blink-features=AutomationControlled")
     
@@ -42,7 +46,7 @@ def get_driver():
         "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
     })
     return driver
-
+    
 # [전용] 데이터 수집 로직 (스크린샷 추가)
 def scrape_projects():
     driver = get_driver()
