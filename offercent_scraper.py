@@ -49,7 +49,6 @@ def get_driver():
     })
     return driver
     
-# [전용] 데이터 수집 로직 (스크린샷 추가)
 # [전용] 데이터 수집 로직
 def scrape_projects():
     driver = get_driver()
@@ -64,7 +63,9 @@ def scrape_projects():
         # [교체 포인트 1] 화면이 뜰 때까지 잠시 대기 후 스크린샷 저장
         time.sleep(10) 
         driver.save_screenshot("check_view.png")
-        print("📸 현재 브라우저 화면을 'check_view.png'로 저장했습니다.")
+        print("--- 현재 페이지 텍스트 일부 추출 ---")
+        print(driver.page_source[:500]) # 페이지 소스 앞부분 500자 출력
+        print("--------------------------------")
 
         # [교체 포인트 2] 요소가 나타날 때까지 기다리는 로직 (오류 발생 지점)
         wait = WebDriverWait(driver, 30)
