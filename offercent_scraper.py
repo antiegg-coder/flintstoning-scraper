@@ -54,75 +54,52 @@ def scrape_projects():
     today = datetime.now().strftime("%Y-%m-%d")
     urls_check = set()
     
-    # 디버깅용 스크린샷 저장 경로
-    output_dir = "screenshots"
-    os.makedirs(output_dir, exist_ok=True)
-
     try:
         driver.get(CONFIG["url"])
-        
-        # 1. 공고 데이터 로딩 대기 (최대 20초)
         wait = WebDriverWait(driver, 20)
-        try:
-            print("⏳ 모바일 레이아웃 데이터 로딩 대기 중...")
-            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'span[data-variant="body-02"]')))
-            time.sleep(5) # 렌더링 안정을 위한 추가 시간
-        except:
-            print("⚠️ 로딩 시간이 초과되었습니다. 현재 화면에서 수집을 시도합니다.")
+        # 공고 카드(a 태그)가 나타날 때까지 대기
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='/job/']")))
+        time.sleep(5)
 
-        # 진단용 스크린샷 찍기
-        driver.save_screenshot(os.path.join(output_dir, f"offercent_check_{today}.png"))
-
-        # 2. 스크롤하며 데이터 수집 (최대 10회)
-        for scroll_idx in range(10):
-            # 핵심 타겟: 회사명과 제목이 공통으로 사용하는 속성
-            elements = driver.find_elements(By.CSS_SELECTOR, 'span[data-variant="body-02"]')
+        for _ in range(10):
+            # 1. 공고 카드(상자)를 먼저 모두 찾습니다.
+            cards = driver.find_elements(By.CSS_SELECTOR, "a[href*='/job/']")
             
-            # 스크린샷 구조 분석 결과: [회사명, 제목, 회사명, 제목...] 순서로 배치됨
-            # 2개씩 짝을 지어 처리 (Step 2)
-            for i in range(0, len(elements) - 1, 2):
+            for card in cards:
                 try:
-                    company_el = elements[i]
-                    title_el = elements[i+1]
+                    href = card.get_attribute("href")
+                    # 2. 카드 내부에서 body-02 속성을 가진 텍스트들을 추출
+                    elements = card.find_elements(By.CSS_SELECTOR, 'span[data-variant="body-02"]')
+                    texts = [el.text.strip() for el in elements if el.text.strip()]
                     
-                    company_txt = company_el.text.strip()
-                    title_txt = title_el.text.strip()
-
-                    # 데이터 정제: 날짜 정보가 제목으로 들어오는 것 방지
-                    if any(x in title_txt for x in ["전", "개월", "일", "주"]) or len(title_txt) < 2:
-                        continue
-                    
-                    # 제목 바로 위의 부모 'a' 태그에서 링크 추출
-                    # 모바일 구조상 제목을 감싸는 가장 가까운 링크를 찾습니다.
-                    try:
-                        href = title_el.find_element(By.XPATH, "./ancestor::a").get_attribute("href")
-                    except:
-                        href = CONFIG["url"]
-
-                    # 중복 체크 및 저장
-                    data_id = f"{href}_{title_txt}"
-                    if data_id not in urls_check:
-                        new_data.append({
-                            'company': company_txt,
-                            'title': title_txt,
-                            'url': href,
-                            'scraped_at': today
-                        })
-                        urls_check.add(data_id)
+                    if len(texts) >= 2:
+                        # 모바일 구조상 카드의 가장 첫 번째 body-02가 회사명입니다.
+                        company = texts[0]
+                        # 두 번째부터는 해당 회사의 공고 제목들입니다.
+                        titles = texts[1:]
+                        
+                        for title in titles:
+                            # 날짜나 기간 정보(칩)는 제외
+                            if any(x in title for x in ["전", "개월", "일", "주"]) or len(title) < 2:
+                                continue
+                            
+                            data_id = f"{href}_{title}"
+                            if data_id not in urls_check:
+                                new_data.append({
+                                    'company': company,
+                                    'title': title,
+                                    'url': href,
+                                    'scraped_at': today
+                                })
+                                urls_check.add(data_id)
                 except:
                     continue
             
-            # 다음 공고를 위해 스크롤 다운
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(3)
-            print(f"🔄 스크롤 {scroll_idx + 1}회 완료 (현재까지 발견: {len(new_data)}건)")
 
-    except Exception as e:
-        print(f"❌ 수집 중 오류 발생: {e}")
     finally: 
         driver.quit()
-    
-    print(f"📊 최종 수집 성공: {len(new_data)}건")
     return new_data
     
 # [공통] 시트 데이터 업데이트 (기존과 동일)
