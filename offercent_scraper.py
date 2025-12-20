@@ -56,38 +56,38 @@ def scrape_projects():
     
     try:
         driver.get(CONFIG["url"])
-        wait = WebDriverWait(driver, 20)
-        # 페이지 내 공고 카드가 최소 하나라도 나타날 때까지 대기
+        wait = WebDriverWait(driver, 25) # 대기 시간 소폭 상향
+        # 공고 카드들이 화면에 보일 때까지 대기
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='/job/']")))
         time.sleep(5) 
 
-        # 무한 스크롤 대응 (최대 10회)
         for scroll_idx in range(10):
-            # 1. 개별 공고 카드(상자) 단위를 먼저 모두 잡습니다.
+            # 1. 개별 공고 카드(상자)를 먼저 리스트로 만듭니다.
+            # 매번 새로 찾아서 'StaleElement' 오류를 방지합니다.
             job_cards = driver.find_elements(By.CSS_SELECTOR, "a[href*='/job/']")
             
             for card in job_cards:
                 try:
-                    href = card.get_attribute("href")
-                    # 2. 카드 내부에서 텍스트가 담긴 요소들만 정밀 타격
-                    # span 태그 중 body-02 속성을 가진 것만 추출
-                    content_elements = card.find_elements(By.CSS_SELECTOR, 'span[data-variant="body-02"]')
-                    all_texts = [el.text.strip() for el in content_elements if el.text.strip()]
+                    # 카드가 화면에서 사라졌을 경우를 대비한 안전장치
+                    if not card.is_displayed(): continue
                     
-                    # 텍스트가 최소 2개(회사명 + 최소 1개의 제목)는 있어야 처리
-                    if len(all_texts) >= 2:
-                        # [컬럼 고정] 첫 번째 텍스트를 무조건 회사명으로 할당
-                        company_name = all_texts[0]
-                        
-                        # [컬럼 고정] 두 번째부터는 해당 회사의 공고 제목 리스트로 분리
-                        job_titles = all_texts[1:]
+                    href = card.get_attribute("href")
+                    
+                    # 2. 카드 내부에서 'body-02' 속성을 가진 텍스트만 정확히 추출
+                    # 이 방식은 컬럼이 섞이는 문제를 원천적으로 막아줍니다.
+                    content_els = card.find_elements(By.CSS_SELECTOR, 'span[data-variant="body-02"]')
+                    texts = [el.text.strip() for el in content_els if el.text.strip()]
+                    
+                    if len(texts) >= 2:
+                        # [컬럼 고정] 첫 번째는 회사명, 나머지는 제목
+                        company_name = texts[0]
+                        job_titles = texts[1:]
                         
                         for title in job_titles:
-                            # '5일 전', '1주 전' 등의 날짜 정보는 제외
+                            # 날짜 정보나 너무 짧은 텍스트는 필터링
                             if any(x in title for x in ["전", "개월", "일", "주"]) or len(title) < 2:
                                 continue
                             
-                            # 중복 여부 확인 (URL + 제목 조합)
                             data_id = f"{href}_{title}"
                             if data_id not in urls_check:
                                 new_data.append({
@@ -98,15 +98,16 @@ def scrape_projects():
                                 })
                                 urls_check.add(data_id)
                 except Exception:
-                    continue # 개별 카드 오류 시 다음 카드로 진행
+                    # 개별 카드에서 문제 발생 시 프로그램 중단 없이 다음 카드로 이동
+                    continue
             
-            # 다음 데이터를 불러오기 위해 스크롤
+            # 다음 공고 로딩을 위한 스크롤
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(3)
-            print(f"🔄 {scroll_idx + 1}번째 스크롤 완료 (누적 {len(new_data)}건 발견)")
+            print(f"🔄 스크롤 {scroll_idx + 1}회 진행 중... (현재 {len(new_data)}건 발견)")
 
     except Exception as e:
-        print(f"❌ 수집 중 치명적 오류 발생: {e}")
+        print(f"❌ 수집 중 오류 발생: {e}")
     finally: 
         driver.quit()
     
