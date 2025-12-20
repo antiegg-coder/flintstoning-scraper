@@ -33,6 +33,8 @@ def get_driver():
     options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")  # 추가: GPU 가속 비활성화 (서버 환경 필수)
+    options.add_argument("--window-size=1920,1080")
     
     # [핵심 수정] 화면 크기를 PC 규격(1920x1080)으로 강제 설정합니다.
     # 이렇게 하면 사진 속의 모바일 화면이 아닌, 우리가 처음에 본 PC 화면이 뜹니다.
