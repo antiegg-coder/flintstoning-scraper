@@ -42,70 +42,81 @@ def get_driver():
     })
     return driver
 
-# [전용] 데이터 수집 로직 (에러 수정 및 순서 기반 짝짓기)
+# [전용] 데이터 수집 로직
 def scrape_projects():
     driver = get_driver()
     new_data = []
     today = datetime.now().strftime("%Y-%m-%d")
     urls_check = set()
     
-    output_dir = "screenshots"
-    os.makedirs(output_dir, exist_ok=True)
-
     try:
         driver.get(CONFIG["url"])
-        
-        wait = WebDriverWait(driver, 20)
-        try:
-            print("⏳ 모바일 레이아웃 데이터 로딩 대기 중...")
-            wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'span[data-variant="body-02"]')))
-            time.sleep(5) 
-        except:
-            print("⚠️ 로딩 시간이 초과되었습니다.")
+        wait = WebDriverWait(driver, 25)
+        # 공고 카드들이 나타날 때까지 대기
+        wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "a[href*='/job/']")))
+        time.sleep(5)
 
-        driver.save_screenshot(os.path.join(output_dir, f"offercent_check_{today}.png"))
-
-        for scroll_idx in range(10):
-            # [수정] elements 변수를 정의하여 순서 기반 매칭 수행
-            elements = driver.find_elements(By.CSS_SELECTOR, 'span[data-variant="body-02"]')
+        for _ in range(10):
+            # 1. 공고 카드(a 태그) 전체를 먼저 확보합니다.
+            cards = driver.find_elements(By.CSS_SELECTOR, "a[href*='/job/']")
             
-            # 2개씩 짝을 지어 처리 (회사명, 제목 순서)
-            for i in range(0, len(elements) - 1, 2):
+            for card in cards:
                 try:
-                    company_txt = elements[i].text.strip()
-                    title_txt = elements[i+1].text.strip()
-
-                    if any(x in title_txt for x in ["전", "개월", "일", "주"]) or len(title_txt) < 2:
-                        continue
+                    href = card.get_attribute("href")
                     
-                    try:
-                        href = elements[i+1].find_element(By.XPATH, "./ancestor::a").get_attribute("href")
-                    except:
-                        href = CONFIG["url"]
+                    # 회사명과 제목 리스트 초기화
+                    company_name = ""
+                    job_titles = []
 
-                    data_id = f"{href}_{title_txt}"
-                    if data_id not in urls_check:
-                        new_data.append({
-                            'company': company_txt,
-                            'title': title_txt,
-                            'url': href,
-                            'scraped_at': today
-                        })
-                        urls_check.add(data_id)
+                    # 2. 카드 내부의 모든 div를 조사하여 클래스별로 역할을 나눕니다.
+                    divs = card.find_elements(By.TAG_NAME, "div")
+                    
+                    for div in divs:
+                        class_name = div.get_attribute("class") or ""
+                        
+                        # [핵심] 클래스가 x6s0dn4로 시작하면 회사명 컨테이너입니다.
+                        if class_name.startswith("x6s0dn4"):
+                            try:
+                                # 해당 컨테이너 내부의 회사명 텍스트 추출
+                                company_el = div.find_element(By.CSS_SELECTOR, 'span[data-variant="body-02"]')
+                                company_name = company_el.text.strip()
+                            except:
+                                continue
+                        
+                        # [핵심] 클래스가 xn25gh9로 시작하면 제목 묶음 컨테이너입니다.
+                        elif class_name.startswith("xn25gh9"):
+                            # 해당 컨테이너 내부의 모든 공고 제목들을 추출
+                            title_elements = div.find_elements(By.CSS_SELECTOR, 'span[data-variant="body-02"]')
+                            for t_el in title_elements:
+                                txt = t_el.text.strip()
+                                # '4일 전', '채용 중인 공고' 등 불필요한 텍스트 필터링
+                                if not any(x in txt for x in ["전", "개월", "일", "주", "채용"]) and len(txt) > 2:
+                                    job_titles.append(txt)
+
+                    # 3. 수집된 정보를 매칭하여 저장
+                    if company_name and job_titles:
+                        for title in job_titles:
+                            data_id = f"{href}_{title}"
+                            if data_id not in urls_check:
+                                new_data.append({
+                                    'company': company_name,
+                                    'title': title,
+                                    'url': href,
+                                    'scraped_at': today
+                                })
+                                urls_check.add(data_id)
                 except:
                     continue
             
+            # 다음 로딩을 위한 스크롤
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(3)
-            print(f"🔄 스크롤 {scroll_idx + 1}회 완료 (현재까지 발견: {len(new_data)}건)")
 
-    except Exception as e:
-        print(f"❌ 수집 중 오류 발생: {e}")
     finally: 
         driver.quit()
     
     return new_data
-
+    
 # [공통] 시트 데이터 업데이트
 def update_sheet(ws, data):
     if not data: 
