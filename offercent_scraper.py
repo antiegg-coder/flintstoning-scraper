@@ -48,13 +48,13 @@ def get_driver():
     return driver
 
 # ==========================================
-# [전용] 오퍼센트 사이트 데이터 수집 로직 (단계별 스크롤 강화)
+# [전용] 오퍼센트 사이트 데이터 수집 로직 (실시간 누적 방식)
 # ==========================================
 def scrape_projects():
     driver = get_driver()
     new_data = []
     today = datetime.now().strftime("%Y-%m-%d")
-    urls_check = set()
+    urls_check = set() # 실시간으로 중복을 걸러내기 위한 세트
     
     try:
         print(f"🔗 접속 중: {CONFIG['url']}")
@@ -62,74 +62,62 @@ def scrape_projects():
         wait = WebDriverWait(driver, 20)
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "a.xqzk367")))
         
-        # ------------------------------------------------------
-        # [강화] 픽셀 단위 단계별 스크롤 (조금씩 끊어서 내리기)
-        # ------------------------------------------------------
-        print("📥 공고를 더 많이 불러오기 위해 정밀 스크롤을 시작합니다...")
+        print("📥 공고를 놓치지 않기 위해 실시간 누적 수집을 시작합니다...")
         
-        # 한 번에 1000픽셀씩 총 15번 내려가며 로딩 대기
-        for i in range(1, 16):
-            # 현재 위치에서 1000픽셀 아래로 이동
-            driver.execute_script(f"window.scrollBy(0, 1000);")
-            time.sleep(2)  # 각 구간 로딩 대기
-            
-            # 중간중간 카드가 늘어나는지 체크용 로그
+        # 단계별로 스크롤하며 보이는 족족 수집
+        for i in range(1, 21): # 더 많이 수집하려면 범위를 늘리세요 (예: 1, 31)
+            # 1. 현재 화면에 보이는 공고 카드들 추출
             current_cards = driver.find_elements(By.CSS_SELECTOR, "a.xqzk367[href*='/jd/']")
-            print(f"🔄 정밀 스크롤 중... ({i}/15) | 현재까지 발견: {len(current_cards)}개")
             
-            # 너무 많이 내려갔을 경우를 대비해 마지막엔 끝까지 한번 더 밀어주기
-            if i == 15:
-                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(3)
-
-        # 최종 카드 리스트 확보
-        cards = driver.find_elements(By.CSS_SELECTOR, "a.xqzk367[href*='/jd/']")
-        print(f"🔍 최종 분석 대상 공고: {len(cards)}개")
-
-        for card in cards:
-            try:
-                title = card.text.strip()
-                full_href = card.get_attribute("href")
-                clean_url = full_href.split('?')[0]
-                
-                # 부모 요소를 타고 올라가며 정보 탐색
-                container = card.find_element(By.XPATH, "..") 
-                company_name, location, experience = "회사명 미상", "", ""
-
-                for _ in range(5):
-                    try:
-                        company_el = container.find_element(By.CSS_SELECTOR, 'span[data-variant="body-02"]')
-                        company_name = company_el.text.strip()
-                        info_el = container.find_element(By.CSS_SELECTOR, 'span[data-variant="body-03"]')
-                        info_text = info_el.text.strip()
+            for card in current_cards:
+                try:
+                    full_href = card.get_attribute("href")
+                    clean_url = full_href.split('?')[0]
+                    title = card.text.strip()
+                    
+                    # [핵심] 이미 담은 공고가 아닐 때만 분석 시작
+                    if clean_url not in urls_check and title:
+                        # 정보 추출 로직 (동일)
+                        container = card.find_element(By.XPATH, "..")
+                        company_name, location, experience = "회사명 미상", "", ""
                         
-                        if "·" in info_text:
-                            parts = info_text.split("·")
-                            location, experience = parts[0].strip(), parts[1].strip()
-                        else:
-                            location = info_text
-                        
-                        if company_name != "회사명 미상" and location:
-                            break
-                    except:
-                        container = container.find_element(By.XPATH, "..")
+                        for _ in range(5):
+                            try:
+                                company_el = container.find_element(By.CSS_SELECTOR, 'span[data-variant="body-02"]')
+                                company_name = company_el.text.strip()
+                                info_el = container.find_element(By.CSS_SELECTOR, 'span[data-variant="body-03"]')
+                                info_text = info_el.text.strip()
+                                
+                                if "·" in info_text:
+                                    parts = info_text.split("·")
+                                    location, experience = parts[0].strip(), parts[1].strip()
+                                else:
+                                    location = info_text
+                                if company_name != "회사명 미상" and location: break
+                            except:
+                                container = container.find_element(By.XPATH, "..")
 
-                data_id = f"{clean_url}_{title}"
-                if data_id not in urls_check:
-                    new_data.append({
-                        'company': company_name, 'title': title, 'location': location,
-                        'experience': experience, 'url': clean_url, 'scraped_at': today
-                    })
-                    urls_check.add(data_id)
+                        # 데이터 누적
+                        new_data.append({
+                            'company': company_name, 'title': title, 'location': location,
+                            'experience': experience, 'url': clean_url, 'scraped_at': today
+                        })
+                        urls_check.add(clean_url)
+                        print(f"✨ 새 공고 발견 ({len(new_data)}개째): {company_name} | {title}")
 
-            except Exception:
-                continue
+                except: continue
+            
+            # 2. 다음 구간으로 스크롤
+            driver.execute_script("window.scrollBy(0, 1200);")
+            time.sleep(2)
+            if i % 5 == 0: print(f"🔄 스크롤 진행 중... ({i}/20)")
 
     finally: 
         driver.quit()
     
-    print(f"📦 최종 수집 완료된 공고: {len(new_data)}건")
+    print(f"✅ 총 {len(new_data)}건의 공고를 누적 수집했습니다!")
     return new_data
+    
 # ==========================================
 # [공통] 시트 데이터 업데이트 로직
 # ==========================================
