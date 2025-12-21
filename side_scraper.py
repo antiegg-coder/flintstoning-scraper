@@ -27,21 +27,30 @@ def get_worksheet():
     if not sheet: raise Exception(f"{CONFIG['gid']} 시트를 못 찾았습니다.")
     return sheet
 
-# [공통] 브라우저 실행
 def get_driver():
     options = Options()
-    options.add_argument("--headless")
+    # 1. 필수 보안/성능 옵션
+    options.add_argument("--headless=new") # 최신 헤드리스 모드 사용
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    # ✅ 일반 브라우저처럼 보이게 하는 핵심 설정
-    options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36")
+    options.add_argument("--disable-gpu")
+    
+    # 2. 봇 차단 우회의 핵심: 실제 브라우저처럼 보이게 하기
+    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+    options.add_argument(f"user-agent={user_agent}")
     options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
     
     driver = webdriver.Chrome(options=options)
     
-    # ✅ 봇 탐지 방지 스크립트
+    # 3. 브라우저 지문 변조
     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-        "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+        "source": """
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            window.chrome = { runtime: {} };
+            Object.defineProperty(navigator, 'languages', {get: () => ['ko-KR', 'ko', 'en-US', 'en']});
+        """
     })
     return driver
 
