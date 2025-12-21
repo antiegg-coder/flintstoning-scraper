@@ -68,7 +68,7 @@ def scrape_projects():
             driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
             time.sleep(2)
 
-        # [전용 선택자] 공고 카드(a 태그) 추출
+        # [제목 로직] 클래스 xqzk367 기반 추출
         cards = driver.find_elements(By.CSS_SELECTOR, "a.xqzk367[href*='/jd/']")
         print(f"🔍 발견된 공고 카드 개수: {len(cards)}개")
 
@@ -76,27 +76,43 @@ def scrape_projects():
             try:
                 title = card.text.strip()
                 full_href = card.get_attribute("href")
-                clean_url = full_href.split('?')[0] # 중복 체크용 URL 정제
+                clean_url = full_href.split('?')[0]
                 
-                # [전용 구조] 부모 컨테이너 탐색 (XPath)
-                container = card.find_element(By.XPATH, "./ancestor::div[contains(@class, 'xdt5ytf')][1]")
+                # [수정 포인트] 특정 클래스명 대신, a태그를 감싸고 있는 
+                # 가장 가까운 div(공고 카드 덩어리)를 유연하게 찾습니다.
+                # 보통 제목 -> 부모(div) -> 부모(div) 구조에 회사명이 있습니다.
                 
-                # [전용 구조] 회사명 추출 (body-02)
-                company_el = container.find_element(By.CSS_SELECTOR, 'span.greet-typography[data-variant="body-02"]')
-                company_name = company_el.text.strip()
+                # a태그의 부모 요소부터 차례로 탐색
+                container = card.find_element(By.XPATH, "..") 
                 
-                # [전용 구조] 지역/경력 추출 (body-03)
-                info_el = container.find_element(By.CSS_SELECTOR, 'span.greet-typography[data-variant="body-03"]')
-                info_text = info_el.text.strip()
-                
-                location, experience = "", ""
-                if "·" in info_text:
-                    parts = info_text.split("·")
-                    location, experience = parts[0].strip(), parts[1].strip()
-                else:
-                    location = info_text
+                company_name = "회사명 미상"
+                location = ""
+                experience = ""
 
-                # 중복 방지 체크 및 리스트업
+                # 상위로 5단계까지만 올라가며 회사명(body-02)과 정보(body-03)가 있는지 확인
+                for _ in range(5):
+                    try:
+                        # 1. 회사명 찾기 (body-02)
+                        company_el = container.find_element(By.CSS_SELECTOR, 'span[data-variant="body-02"]')
+                        company_name = company_el.text.strip()
+                        
+                        # 2. 지역/경력 찾기 (body-03)
+                        info_el = container.find_element(By.CSS_SELECTOR, 'span[data-variant="body-03"]')
+                        info_text = info_el.text.strip()
+                        
+                        if "·" in info_text:
+                            parts = info_text.split("·")
+                            location, experience = parts[0].strip(), parts[1].strip()
+                        else:
+                            location = info_text
+                        
+                        # 회사명과 지역 정보가 모두 확보되면 탐색 중단
+                        if company_name != "회사명 미상" and location:
+                            break
+                    except:
+                        # 정보를 못 찾으면 한 단계 더 위 부모로 이동
+                        container = container.find_element(By.XPATH, "..")
+
                 data_id = f"{clean_url}_{title}"
                 if data_id not in urls_check:
                     new_data.append({
@@ -111,6 +127,7 @@ def scrape_projects():
                     print(f"✅ 추출 성공: {company_name} | {title}")
 
             except Exception as e:
+                # print(f"❌ 개별 카드 오류: {e}") # 필요 시 주석 해제하여 상세 오류 확인
                 continue
 
     finally: 
