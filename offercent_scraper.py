@@ -48,13 +48,13 @@ def get_driver():
     return driver
 
 # ==========================================
-# [전용] 오퍼센트 사이트 데이터 수집 로직 (실시간 누적 방식)
+# [전용] 오퍼센트 사이트 데이터 수집 로직 (키워드 기반 분류 적용)
 # ==========================================
 def scrape_projects():
     driver = get_driver()
     new_data = []
     today = datetime.now().strftime("%Y-%m-%d")
-    urls_check = set() # 실시간으로 중복을 걸러내기 위한 세트
+    urls_check = set()
     
     try:
         print(f"🔗 접속 중: {CONFIG['url']}")
@@ -62,11 +62,10 @@ def scrape_projects():
         wait = WebDriverWait(driver, 20)
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "a.xqzk367")))
         
-        print("📥 공고를 놓치지 않기 위해 실시간 누적 수집을 시작합니다...")
+        print("📥 실시간 누적 수집 및 데이터 분류를 시작합니다...")
         
-        # 단계별로 스크롤하며 보이는 족족 수집
-        for i in range(1, 21): # 더 많이 수집하려면 범위를 늘리세요 (예: 1, 31)
-            # 1. 현재 화면에 보이는 공고 카드들 추출
+        # 단계별로 스크롤하며 수집 (필요시 range 숫자를 높여 더 많이 수집 가능)
+        for i in range(1, 21):
             current_cards = driver.find_elements(By.CSS_SELECTOR, "a.xqzk367[href*='/jd/']")
             
             for card in current_cards:
@@ -75,47 +74,58 @@ def scrape_projects():
                     clean_url = full_href.split('?')[0]
                     title = card.text.strip()
                     
-                    # [핵심] 이미 담은 공고가 아닐 때만 분석 시작
                     if clean_url not in urls_check and title:
-                        # 정보 추출 로직 (동일)
                         container = card.find_element(By.XPATH, "..")
                         company_name, location, experience = "회사명 미상", "", ""
                         
                         for _ in range(5):
                             try:
+                                # 회사명 추출
                                 company_el = container.find_element(By.CSS_SELECTOR, 'span[data-variant="body-02"]')
                                 company_name = company_el.text.strip()
+                                
+                                # 지역/경력 통합 텍스트 추출
                                 info_el = container.find_element(By.CSS_SELECTOR, 'span[data-variant="body-03"]')
                                 info_text = info_el.text.strip()
                                 
-                                if "·" in info_text:
-                                    parts = info_text.split("·")
-                                    location, experience = parts[0].strip(), parts[1].strip()
-                                else:
-                                    location = info_text
-                                if company_name != "회사명 미상" and location: break
+                                # ------------------------------------------------------
+                                # [핵심] 키워드 기반 자동 분류 로직
+                                # ------------------------------------------------------
+                                if info_text:
+                                    # 가운데 점(·)이 있으면 나누고, 없으면 통째로 리스트화
+                                    parts = [p.strip() for p in info_text.split("·")] if "·" in info_text else [info_text]
+                                    
+                                    exp_keywords = ["경력", "신입", "년", "무관"]
+                                    
+                                    for part in parts:
+                                        # 조각 내에 경력 관련 키워드가 있는지 검사
+                                        if any(key in part for key in exp_keywords):
+                                            experience = part
+                                        else:
+                                            # 키워드가 없으면 지역으로 간주 (단, 이미 채워졌다면 무시)
+                                            if not location:
+                                                location = part
+
+                                if company_name != "회사명 미상": break
                             except:
                                 container = container.find_element(By.XPATH, "..")
 
-                        # 데이터 누적
                         new_data.append({
                             'company': company_name, 'title': title, 'location': location,
                             'experience': experience, 'url': clean_url, 'scraped_at': today
                         })
                         urls_check.add(clean_url)
-                        print(f"✨ 새 공고 발견 ({len(new_data)}개째): {company_name} | {title}")
+                        print(f"✨ 수집: {company_name} | {location} | {experience}")
 
                 except: continue
             
-            # 2. 다음 구간으로 스크롤
             driver.execute_script("window.scrollBy(0, 1200);")
-            time.sleep(2)
-            if i % 5 == 0: print(f"🔄 스크롤 진행 중... ({i}/20)")
+            time.sleep(2.5)
 
     finally: 
         driver.quit()
     
-    print(f"✅ 총 {len(new_data)}건의 공고를 누적 수집했습니다!")
+    print(f"✅ 총 {len(new_data)}건의 공고를 정확하게 분류하여 수집했습니다!")
     return new_data
     
 # ==========================================
