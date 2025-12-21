@@ -29,3 +29,10 @@ jobs:
           GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
         run: |
           python side_scraper.py
+
+      - name: Set up Chrome
+        uses: browser-actions/setup-chrome@v1
+  
+      - name: Install dependencies
+        run: |
+          pip install selenium webdriver-manager gspread oauth2client
