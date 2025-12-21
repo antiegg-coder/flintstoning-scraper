@@ -149,7 +149,7 @@ def update_sheet(ws, data):
         row = [''] * len(headers)
         for k, v in item.items():
             if k in col_map: row[col_map[k]] = v
-        if 'status' in col_map: row[col_map['status']] = 'new'
+        if 'status' in col_map: row[col_map['status']] = 'archived'
         rows_to_append.append(row)
     
     if rows_to_append:
