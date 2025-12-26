@@ -152,7 +152,7 @@ try:
                 {
                     "type": "section",
                     "fields": [
-                        {"type": "mrkdwn", "text": f"*모집 포지션*\n{gpt_res.get('inferred_role', '콘텐츠 기획자')}"},
+                        {"type": "mrkdwn", "text": f"*모집 포지션*\n콘텐츠 기획자"},
                         {"type": "mrkdwn", "text": f"*지역*\n{final_location}"}
                     ]
                 },
