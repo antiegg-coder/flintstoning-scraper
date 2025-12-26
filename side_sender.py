@@ -80,7 +80,7 @@ try:
                 'Connection': 'keep-alive'
             }
 
-            # 봇 감지 방지 랜덤 대기 (3.0~5.0초)
+            # 봇 감지 방지 랜덤 대기
             time.sleep(random.uniform(3.0, 5.0))
 
             resp = session.get(target_url, headers=headers_ua, timeout=15)
@@ -92,14 +92,13 @@ try:
 
             # 4. [적합성 판단] 에디팅 포지션 여부 필터링
             identity_prompt = f"""
-           안녕하세요, 당신은 에디터 공동체 'ANTIEGG'의 프로젝트 큐레이터입니다. 
+            안녕하세요, 당신은 에디터 공동체 'ANTIEGG'의 프로젝트 큐레이터입니다. 
             아래 프로젝트가 에디터들이 참여하기 적합한 '콘텐츠 관련 사이드 프로젝트'인지 판단해 주세요.
 
             [판단 기준]
             1. 프로젝트 자체의 성격보다 **'모집 중인 역할(Role)'**이 중요합니다.
             2. 에디터, 콘텐츠 마케터, 작가, 뉴스레터 기획자, 스토리 작가, 교정교열 등 '텍스트'와 '콘텐츠' 중심의 포지션이 없다면 탈락시키세요.
             3. 단순히 개발자, 디자이너만 모집하는 프로젝트는 FALSE를 반환하세요.
-
             [내용] {truncated_text}
             """
             check_res = client_openai.chat.completions.create(
@@ -117,33 +116,30 @@ try:
             time.sleep(1)
             sheet.update_cell(update_row_index, identity_col_idx, str(is_appropriate).upper())
 
-            # [수정 사항 1] 부적합 시 status를 'dropped'로 변경하고 다음 행으로 이동
+            # 부적합 시 status를 'dropped'로 변경하고 다음 행으로 이동
             if not is_appropriate:
                 print(f"⚠️ 부적합 판정: status를 'dropped'로 변경합니다.")
                 sheet.update_cell(update_row_index, status_col_idx, 'dropped')
                 continue
 
-            # 5. [슬랙 생성]
+            # 5. [슬랙 생성] 요약 및 추천사 (모집 포지션 관련 추출 제거)
             summary_prompt = f"""
             당신은 ANTIEGG의 프로젝트 큐레이터입니다. 동료들에게 이 프로젝트를 세련되게 소개해 주세요.
             
-            1. inferred_role: 본문을 분석하여 에디터가 맡을 수 있는 가장 적합한 '모집 포지션'을 한 단어로 추출해 주세요.
-            2. summary: 프로젝트의 정체성과 핵심 기능을 설명하는 2개의 문장을 작성해 주세요. 
+            1. summary: 프로젝트의 정체성과 핵심 기능을 설명하는 2개의 문장을 작성해 주세요. 
                - **주의**: 'ANTIEGG는~'로 시작하지 마세요. 프로젝트 자체를 주어로 하거나 문장형으로 작성해 주세요.
-            4. recommendations: 에디터들에게 구미가 당길만한 구체적인 이유 3가지. 
+            2. recommendations: 에디터들에게 구미가 당길만한 구체적인 이유 3가지. 
                - **지침**: '열심히 할 분' 같은 일반적인 말은 금지. 
                - **예시**: "브랜드의 보이스앤톤을 직접 설계해보고 싶은 분", "독립 잡지 출판의 전 과정을 경험하고 싶은 분", "텍스트 기반 커뮤니티의 운영 로직을 배우고 싶은 분" 등 직무적 성장과 연결할 것.
                - 문구 내 '에디터' 단어 직접 사용 금지, 끝맺음은 "~한 분"으로 통일.
-            4. inferred_location: 본문을 분석하여 '활동 지역' 추출 (예: 서울 강남, 온라인 등).
-            
-            어투: 매우 정중하고 지적인 경어체 (~합니다).
+            3. inferred_location: 본문을 분석하여 '활동 지역' 추출 (예: 서울 강남, 온라인 등).
             [내용] {truncated_text}
             """
             summary_res = client_openai.chat.completions.create(
                 model="gpt-4o-mini",
                 response_format={ "type": "json_object" },
                 messages=[
-                    {"role": "system", "content": "Respond only in JSON format with keys: inferred_role, inferred_location, summary(list), recommendations(list)."},
+                    {"role": "system", "content": "Respond only in JSON format with keys: inferred_location, summary(list), recommendations(list)."},
                     {"role": "user", "content": summary_prompt}
                 ]
             )
@@ -151,14 +147,13 @@ try:
             
             final_location = sheet_location if sheet_location else gpt_res.get('inferred_location', '온라인 (협의 가능)')
             
-            # 6. 슬랙 전송
+            # 6. 슬랙 전송 (모집 포지션 삭제됨)
             blocks = [
-                {"type": "section", "text": {"type": "mrkdwn", "text": "✨ *사이드프로젝트 동료 찾고 있어요*"}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": "*사이드프로젝트 동료 찾고 있어요*"}},
                 {"type": "section", "text": {"type": "mrkdwn", "text": f"*{project_title}*"}},
                 {
                     "type": "section",
                     "fields": [
-                        {"type": "mrkdwn", "text": f"*모집 포지션*\n{gpt_res.get('inferred_role', '콘텐츠 기획자')}"},
                         {"type": "mrkdwn", "text": f"*지역*\n{final_location}"}
                     ]
                 },
@@ -179,7 +174,7 @@ try:
                 print(f"❌ 슬랙 전송 실패: {slack_resp.status_code}")
                 sheet.update_cell(update_row_index, status_col_idx, 'failed')
 
-            # [수정 사항 2] break를 제거하여 시트의 모든 행을 처리합니다.
+            # 모든 행을 처리하기 위해 대기 후 다음 루프로 진행
             time.sleep(1.5)
 
         except Exception as e:
