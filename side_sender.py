@@ -13,7 +13,7 @@ import time
 # 1. 설정 및 인증
 # =========================================================
 try:
-    print("--- [Side Sender] 프로세스를 시작합니다 ---")
+    print("--- [Side Sender] 전체 자동화 프로세스를 시작합니다 ---")
     
     if 'GOOGLE_CREDENTIALS' not in os.environ:
         raise Exception("환경변수 GOOGLE_CREDENTIALS가 설정되지 않았습니다.")
@@ -43,46 +43,45 @@ try:
     COL_URL = 'url'         
     COL_LOCATION = 'location' 
 
+    # 'archived' 상태인 모든 프로젝트 추출
     target_rows = df[df[COL_STATUS].str.strip().str.lower() == 'archived']
 
     if target_rows.empty:
-        print("ℹ️ 'archived' 상태의 프로젝트가 없습니다.")
+        print("ℹ️ 처리할 'archived' 상태의 프로젝트가 없습니다.")
         exit()
+
+    print(f"총 {len(target_rows)}건의 프로젝트 처리를 시작합니다.")
 
     identity_col_idx = headers.index(COL_IDENTITY) + 1
     status_col_idx = headers.index(COL_STATUS) + 1
     client_openai = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
     webhook_url = os.environ['SLACK_WEBHOOK_URL']
     
-    # 차단 우회를 위한 세션 생성
     session = requests.Session()
 
     # =========================================================
-    # 2. 메인 루프
+    # 2. 메인 루프: 모든 'archived' 행을 끝까지 순회합니다.
     # =========================================================
     for index, row in target_rows.iterrows():
         update_row_index = int(index) + 2
         project_title = row[COL_TITLE]
         target_url = row[COL_URL]
-        
-        # 시트 내 지역 정보 확보
         sheet_location = row.get(COL_LOCATION, "").strip() 
         
         print(f"\n🔍 {update_row_index}행 검토 중: {project_title}")
 
         try:
-            # 3. [403 Forbidden 해결] 강력한 브라우저 위장 및 랜덤 대기
+            # 3. [차단 우회] 강력한 브라우저 위장 및 랜덤 대기
             headers_ua = {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
                 'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
                 'Referer': 'https://www.google.com/',
-                'Connection': 'keep-alive',
-                'Upgrade-Insecure-Requests': '1'
+                'Connection': 'keep-alive'
             }
 
-            # 봇 감지 방지 랜덤 대기 (2.5~4.5초)
-            time.sleep(random.uniform(2.5, 4.5))
+            # 봇 감지 방지 랜덤 대기 (3.0~5.0초)
+            time.sleep(random.uniform(3.0, 5.0))
 
             resp = session.get(target_url, headers=headers_ua, timeout=15)
             resp.raise_for_status()
@@ -91,9 +90,9 @@ try:
             text_content = " ".join([p.get_text().strip() for p in soup.find_all(['p', 'h2', 'h3', 'li', 'span']) if len(p.get_text().strip()) > 10])
             truncated_text = text_content[:3500]
 
-            # 4. [적합성 판단] 에디팅 포지션 여부 엄격 필터링
+            # 4. [적합성 판단] 에디팅 포지션 여부 필터링
             identity_prompt = f"""
-            안녕하세요, 당신은 에디터 공동체 'ANTIEGG'의 프로젝트 큐레이터입니다. 
+           안녕하세요, 당신은 에디터 공동체 'ANTIEGG'의 프로젝트 큐레이터입니다. 
             아래 프로젝트가 에디터들이 참여하기 적합한 '콘텐츠 관련 사이드 프로젝트'인지 판단해 주세요.
 
             [판단 기준]
@@ -102,23 +101,29 @@ try:
             3. 단순히 개발자, 디자이너만 모집하는 프로젝트는 FALSE를 반환하세요.
 
             [내용] {truncated_text}
-            출력 포맷(JSON): {{"is_appropriate": true/false, "reason": ""}}
             """
             check_res = client_openai.chat.completions.create(
                 model="gpt-4o-mini",
                 response_format={ "type": "json_object" },
-                messages=[{"role": "user", "content": identity_prompt}]
+                messages=[
+                    {"role": "system", "content": "You are a professional project analyst. Respond only in JSON format with keys: 'is_appropriate' (boolean), 'reason' (string)."},
+                    {"role": "user", "content": identity_prompt}
+                ]
             )
             judgment = json.loads(check_res.choices[0].message.content)
+            is_appropriate = judgment.get("is_appropriate", False)
             
+            # identity_match 업데이트
             time.sleep(1)
-            sheet.update_cell(update_row_index, identity_col_idx, str(judgment['is_appropriate']).upper())
+            sheet.update_cell(update_row_index, identity_col_idx, str(is_appropriate).upper())
 
-            if not judgment['is_appropriate']:
-                print(f"⚠️ 에디팅 포지션 없음 (탈락)")
+            # [수정 사항 1] 부적합 시 status를 'dropped'로 변경하고 다음 행으로 이동
+            if not is_appropriate:
+                print(f"⚠️ 부적합 판정: status를 'dropped'로 변경합니다.")
+                sheet.update_cell(update_row_index, status_col_idx, 'dropped')
                 continue
 
-            # 5. [슬랙 생성] 에디터 맞춤형 추천사 (지역/직무 추론 포함)
+            # 5. [슬랙 생성]
             summary_prompt = f"""
             당신은 ANTIEGG의 프로젝트 큐레이터입니다. 동료들에게 이 프로젝트를 세련되게 소개해 주세요.
             
@@ -133,22 +138,23 @@ try:
             
             어투: 매우 정중하고 지적인 경어체 (~합니다).
             [내용] {truncated_text}
-            출력 포맷(JSON): {{"inferred_role": "", "inferred_location": "", "summary": [], "recommendations": []}}
             """
             summary_res = client_openai.chat.completions.create(
                 model="gpt-4o-mini",
                 response_format={ "type": "json_object" },
-                messages=[{"role": "user", "content": summary_prompt}]
+                messages=[
+                    {"role": "system", "content": "Respond only in JSON format with keys: inferred_role, inferred_location, summary(list), recommendations(list)."},
+                    {"role": "user", "content": summary_prompt}
+                ]
             )
             gpt_res = json.loads(summary_res.choices[0].message.content)
             
-            # 지역 정보 결정: 시트값 우선 -> 없으면 GPT 추론값
             final_location = sheet_location if sheet_location else gpt_res.get('inferred_location', '온라인 (협의 가능)')
             
             # 6. 슬랙 전송
             blocks = [
-                {"type": "section", "text": {"type": "mrkdwn", "text": "*사이드프로젝트 동료 찾고 있어요*"}},
-                {"type": "section", "text": {"type": "mrkdwn", "text": f"* {project_title}*"}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": "✨ *사이드프로젝트 동료 찾고 있어요*"}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": f"*{project_title}*"}},
                 {
                     "type": "section",
                     "fields": [
@@ -163,17 +169,26 @@ try:
                 {"type": "actions", "elements": [{"type": "button", "text": {"type": "plain_text", "text": "프로젝트 보러가기", "emoji": True}, "style": "primary", "url": target_url}]}
             ]
             
-            requests.post(webhook_url, json={"blocks": blocks})
-            time.sleep(1)
-            sheet.update_cell(update_row_index, status_col_idx, 'published')
-            print(f"✅ 전송 성공: {project_title}")
-            break 
+            slack_resp = requests.post(webhook_url, json={"blocks": blocks})
+            
+            if slack_resp.status_code == 200:
+                print(f"✅ 전송 성공: {project_title}")
+                time.sleep(1)
+                sheet.update_cell(update_row_index, status_col_idx, 'published')
+            else:
+                print(f"❌ 슬랙 전송 실패: {slack_resp.status_code}")
+                sheet.update_cell(update_row_index, status_col_idx, 'failed')
+
+            # [수정 사항 2] break를 제거하여 시트의 모든 행을 처리합니다.
+            time.sleep(1.5)
 
         except Exception as e:
             print(f"❌ {update_row_index}행 처리 오류: {e}")
+            if "429" in str(e): 
+                time.sleep(60)
             continue
 
 except Exception as e:
     print(f"❌ 치명적 오류: {e}")
 finally:
-    print("--- 모든 프로세스가 종료되었습니다 ---")
+    print("--- [Side Sender] 모든 프로세스가 종료되었습니다 ---")
