@@ -125,6 +125,7 @@ try:
     print("--- GPT 요약 요청 ---")
     client_openai = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
 
+    # f-string 내부에서 { }를 문자열로 쓰려면 {{ }} 처럼 두 번 써야 합니다.
     gpt_prompt = f"""
     너는 IT/테크 트렌드를 분석해주는 '인사이트 큐레이터'야.
     아래 [글 내용]을 읽고, 팀원들에게 공유할 수 있게 핵심 내용을 요약해줘.
@@ -139,87 +140,84 @@ try:
     {truncated_text}
     """
 
+    # 에러 방지를 위해 response_format 구조 주의
     completion = client_openai.chat.completions.create(
         model="gpt-3.5-turbo-0125",
-        response_format={{ "type": "json_object" }}, # f-string 안이라서 중괄호를 두 번 {{ }} 써야 할 수 있습니다.
+        response_format={ "type": "json_object" }, 
         messages=[
-            {{"role": "system", "content": "You are a helpful assistant that outputs JSON."}},
-            {{"role": "user", "content": gpt_prompt}}
+            {"role": "system", "content": "You are a helpful assistant that outputs JSON."},
+            {"role": "user", "content": gpt_prompt}
         ]
     )
-    
+
     # 결과 파싱
     gpt_res = json.loads(completion.choices[0].message.content)
     key_points = gpt_res.get("key_points", [])
     recommendations = gpt_res.get("recommendations", [])
 
-# =========================================================
-# 6. 슬랙 전송 (Block Kit UI 구성)
-# =========================================================
-print("--- 슬랙 전송 시작 (Block Kit) ---")
-webhook_url = os.environ['SLACK_WEBHOOK_URL']
+    # =========================================================
+    # 6. 슬랙 전송 (Block Kit UI 구성)
+    # =========================================================
+    print("--- 슬랙 전송 시작 (Block Kit) ---")
+    webhook_url = os.environ['SLACK_WEBHOOK_URL']
 
-# 불렛포인트 문자열 생성
-key_points_text = "\n".join([f"• {point}" for point in key_points])
-recommend_text = "\n".join([f"• {rec}" for rec in recommendations])
+    # 리스트 데이터를 불렛포인트 텍스트로 변환
+    key_points_text = "\n".join([f"• {point}" for point in key_points])
+    recommend_text = "\n".join([f"• {rec}" for rec in recommendations])
 
-# 이미지와 동일한 레이아웃 구성
-blocks = [
-    {
-        "type": "header",
-        "text": {
-            "type": "plain_text",
-            "text": "지금 주목해야 할 아티클",
-            "emoji": True
-        }
-    },
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": f"*{project_title}*" # 제목 강조
-        }
-    },
-    {
-        "type": "divider" # 구분선
-    },
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": f"📌 *이 글에서 이야기하는 것들*\n{key_points_text}"
-        }
-    },
-    {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": f"📌 *이런 분께 추천해요*\n{recommend_text}"
-        }
-    },
-    {
-        "type": "divider"
-    },
-    {
-        "type": "actions",
-        "elements": [
-            {
-                "type": "button",
-                "text": {
-                    "type": "plain_text",
-                    "text": "아티클 보러가기",
-                    "emoji": True
-                },
-                "style": "primary", # 초록색 버튼
-                "url": target_url
+    # 이미지와 동일한 레이아웃 구성
+    blocks = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": "지금 주목해야 할 아티클",
+                "emoji": True
             }
-        ]
-    }
-]
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*{project_title}*"
+            }
+        },
+        {
+            "type": "divider"
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"📌 *이 글에서 이야기하는 것들*\n{key_points_text}"
+            }
+        },
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"📌 *이런 분께 추천해요*\n{recommend_text}"
+            }
+        },
+        {
+            "type": "divider"
+        },
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {
+                        "type": "plain_text",
+                        "text": "아티클 보러가기",
+                        "emoji": True
+                    },
+                    "style": "primary",
+                    "url": target_url
+                }
+            ]
+        }
+    ]
 
-# 슬랙 전송 (text 대신 blocks 사용)
-slack_res = requests.post(webhook_url, json={"blocks": blocks})
-
-if slack_res.status_code == 200:
-    print("✅ 슬랙 전송 성공!")
-    # ... 이후 시트 업데이트 로직은 기존과 동일 ...
+    # 슬랙 전송
+    slack_res = requests.post(webhook_url, json={"blocks": blocks})
