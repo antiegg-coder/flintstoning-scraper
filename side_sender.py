@@ -100,16 +100,22 @@ try:
                 continue
 
             # 5. 슬랙 메시지 내용 생성 (모집 포지션 추론 포함)
+            # [5. 슬랙 메시지 생성 프롬프트 최종 수정]
             summary_prompt = f"""
-            당신은 ANTIEGG의 큐레이터입니다. 동료 에디터를 위해 프로젝트 상세 정보와 추천사를 작성해 주세요.
-
-            1. inferred_role: 본문을 분석하여 에디터가 맡을 수 있는 가장 적합한 '모집 포지션'을 한 단어 혹은 짧은 구로 추출해 주세요. (예: 콘텐츠 기획자, 뉴스레터 에디터, 브랜드 마케터 등)
-            2. summary: 프로젝트의 정체성을 설명하는 2개의 문장.
-            3. recommendations: 추천 이유 3가지 (끝맺음: "~한 분").
-
-            어투: 매우 정중한 경어체.
+            당신은 ANTIEGG의 프로젝트 큐레이터입니다. 동료들에게 이 프로젝트를 세련되게 소개해 주세요.
+            
+            1. inferred_role: 본문을 분석하여 에디터가 맡을 수 있는 가장 적합한 '모집 포지션'을 한 단어로 추출해 주세요.
+            2. summary: 프로젝트의 정체성과 핵심 기능을 설명하는 2개의 문장을 작성해 주세요. 
+               - **주의**: 'ANTIEGG는~'로 시작하지 마세요. 프로젝트 자체를 주어로 하거나 문장형으로 작성해 주세요.
+            3. recommendations: 이 프로젝트가 영감을 주거나 필요한 이유 3가지를 제안해 주세요.
+               - **주의**: 문구 안에 '에디터'라는 단어를 직접 넣지 마세요. 
+               - 대신 콘텐츠 기획, 브랜딩, 글쓰기 등 직무적 고민이 느껴지도록 작성해 주세요.
+               - 끝맺음: "~한 분"으로 통일해 주세요.
+            4. inferred_location: 본문을 분석하여 '활동 지역' 추출. (온라인/오프라인 여부 포함)
+            
+            어투: 매우 정중하고 지적인 경어체 (~합니다).
             [글 내용] {truncated_text}
-            출력 포맷(JSON): {{"inferred_role": "", "summary": [], "recommendations": []}}
+            출력 포맷(JSON): {{"inferred_role": "", "inferred_location": "", "summary": [], "recommendations": []}}
             """
             summary_res = client_openai.chat.completions.create(
                 model="gpt-4o-mini",
@@ -117,6 +123,9 @@ try:
                 messages=[{"role": "user", "content": summary_prompt}]
             )
             gpt_res = json.loads(summary_res.choices[0].message.content)
+            
+            # [지역 정보 결정] 시트에 있으면 시트값, 없으면 GPT 추론값 사용
+            final_location = sheet_location if sheet_location else gpt_res.get('inferred_location', '온라인 (협의)')
             
             # 6. 슬랙 전송 (이미지 UI 완벽 재현)
             blocks = [
