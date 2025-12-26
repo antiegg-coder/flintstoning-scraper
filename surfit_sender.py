@@ -6,206 +6,169 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from openai import OpenAI
-import time
 
 # =========================================================
 # 1. 설정 및 인증
 # =========================================================
 try:
-    print("--- [Surfit Sender] 시작 ---")
+    print("--- [Mix Sender] 프로세스를 시작합니다 ---")
     
-    # 환경변수 로드 확인
     if 'GOOGLE_CREDENTIALS' not in os.environ:
-        raise Exception("환경변수 GOOGLE_CREDENTIALS가 없습니다.")
+        raise Exception("환경변수 GOOGLE_CREDENTIALS가 설정되지 않았습니다.")
 
-    json_creds = os.environ['GOOGLE_CREDENTIALS']
-    creds_dict = json.loads(json_creds)
+    creds_dict = json.loads(os.environ['GOOGLE_CREDENTIALS'])
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
 
-    # 시트 열기
+    # 스프레드시트 열기
     spreadsheet = client.open('플린트스토닝 소재 DB')
     
-    # '서핏' 탭 연결
-    try:
-        sheet = spreadsheet.worksheet('서핏')
-        print(f"📂 연결된 시트: {sheet.title}")
-    except gspread.exceptions.WorksheetNotFound:
-        print("❌ '서핏'이라는 이름의 탭을 찾을 수 없습니다. 탭 이름을 확인해주세요.")
-        exit()
-    except Exception as e:
-        print(f"❌ 시트 로드 중 에러: {e}")
-        exit()
-
-    # 데이터 가져오기
-    data = sheet.get_all_values()
-    if not data:
-        print("데이터가 없습니다.")
-        exit()
-
-    headers = data.pop(0)
-    df = pd.DataFrame(data, columns=headers)
+    # [수정 사항 1] gid(2112710663)를 기반으로 워크시트 찾기
+    TARGET_GID = 2112710663
+    sheet = None
+    for s in spreadsheet.worksheets():
+        if s.id == TARGET_GID:
+            sheet = s
+            break
     
-    # 헤더 공백 제거
-    df.columns = df.columns.str.strip()
+    if not sheet:
+        raise Exception(f"GID가 {TARGET_GID}인 워크시트를 찾을 수 없습니다.")
+    
+    data = sheet.get_all_values()
+    headers = [h.strip() for h in data[0]]
+    df = pd.DataFrame(data[1:], columns=headers)
 
-    # =========================================================
-    # 2. 필터링
-    # =========================================================
     COL_STATUS = 'status'
-    COL_PUBLISH = 'publish'
+    COL_IDENTITY = 'identity_match'
     COL_TITLE = 'title'
     COL_URL = 'url'
 
-    required_cols = [COL_STATUS, COL_PUBLISH, COL_TITLE, COL_URL]
-    for col in required_cols:
-        if col not in df.columns:
-            print(f"❌ 오류: 시트에 '{col}' 헤더가 없습니다.")
-            exit()
-
-    # 조건: status는 'archived', publish는 'TRUE'
-    condition = (df[COL_STATUS].str.strip() == 'archived') & (df[COL_PUBLISH].str.strip() == 'TRUE')
-    target_rows = df[condition]
+    target_rows = df[df[COL_STATUS].str.strip().str.lower() == 'archived']
 
     if target_rows.empty:
-        print("ℹ️ 발송할 대상(archived & publish=TRUE)이 없습니다.")
+        print("ℹ️ 'archived' 상태의 아티클이 현재 시트에 없습니다.")
         exit()
 
-    # 첫 번째 행 선택
-    row = target_rows.iloc[0]
-    
-    # 행 번호 계산 (헤더 제외한 데이터 프레임 인덱스 + 2)
-    update_row_index = row.name + 2
-    
-    print(f"▶ 선택된 행 번호: {update_row_index}")
-
-    # =========================================================
-    # 3. 데이터 추출
-    # =========================================================
-    project_title = row[COL_TITLE]
-    target_url = row[COL_URL]
-    
-    print(f"▶ 제목: {project_title}")
-    print(f"▶ URL: {target_url}")
-
-    # =========================================================
-    # 4. 웹 스크래핑 (403 에러 해결을 위한 헤더 강화)
-    # =========================================================
-    print("--- 스크래핑 시작 ---")
-    
-    # [수정됨] 봇 탐지를 피하기 위해 실제 브라우저와 똑같은 헤더 사용
-    headers_ua = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-        'Referer': 'https://www.google.com/'
-    }
-    
-    try:
-        # 서핏 링크는 리다이렉트가 발생하므로 allow_redirects=True (기본값)
-        response = requests.get(target_url, headers=headers_ua, timeout=15)
-        response.raise_for_status()
-        
-        # 최종 도달한 URL 확인 (리다이렉트 된 경우)
-        print(f"ℹ️ 최종 목적지 URL: {response.url}")
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        article = soup.find('article')
-        if article:
-            paragraphs = article.find_all('p')
-        else:
-            paragraphs = soup.find_all('p')
-        
-        # 빈 문단 제외 및 공백 제거 후 연결
-        text_list = [p.get_text().strip() for p in paragraphs if p.get_text().strip()]
-        full_text = " ".join(text_list)
-        
-        if len(full_text) < 50:
-             print("⚠️ 본문 내용이 너무 짧습니다. (스크래핑 실패 또는 이미지 위주 본문 가능성)")
-             
-        truncated_text = full_text[:3000]
-        
-    except Exception as e:
-        # [수정됨] 119번줄 에러 해결
-        print(f"❌ 스크래핑 실패: {e}")
-        exit()
-
-    # =========================================================
-    # 5. GPT 요약
-    # =========================================================
-    print("--- GPT 요약 요청 ---")
+    identity_col_idx = headers.index(COL_IDENTITY) + 1
+    status_col_idx = headers.index(COL_STATUS) + 1
     client_openai = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
-
-    gpt_prompt = f"""
-    너는 IT/테크 트렌드를 분석해주는 '인사이트 큐레이터'야.
-    아래 [글 내용]을 읽고, 팀원들에게 공유할 수 있게 요약해줘.
-
-    [작성 규칙]
-    1. **어조**: 모든 문장은 반드시 '**~합니다.**' 또는 '**~입니다.**'와 같은 정중한 합쇼체(경어)로 끝내야 해.
-    2. **금지**: '~음', '~함', '~것' 같은 명사형 종결이나 반말은 절대 사용하지 마.
-    3. **이모지**: 본문 내용 중에 이모지를 절대 사용하지 마.
-
-    [출력 양식]
-    *내용 요약*
-    (글의 핵심 내용을 3문장 내외의 줄글로 작성. 반드시 경어로 끝낼 것.)
-
-    *추천 이유*
-    (이 글을 팀원들에게 읽어보라고 추천하는 이유나 핵심 가치를 1~2문장으로 작성. 반드시 경어로 끝낼 것.)
-
-    [글 내용]
-    {truncated_text}
-    """
-
-    completion = client_openai.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant. Use polite Korean sentences ending in period."},
-            {"role": "user", "content": gpt_prompt}
-        ]
-    )
-
-    gpt_body = completion.choices[0].message.content
-
-    # 슬랙 메시지 조립
-    slack_link_format = f"<{target_url}|아티클 바로가기>"
-    
-    final_message_with_link = (
-        f"*<지금 주목해야 할 아티클>*\n\n"
-        f"*{project_title}*\n\n"
-        f"{gpt_body}\n\n"
-        f"🔗 {slack_link_format}"
-    )
-    
-    print("--- 최종 결과물 ---")
-    print(final_message_with_link)
-
-    # =========================================================
-    # 6. 슬랙 전송 & 시트 업데이트
-    # =========================================================
-    print("--- 슬랙 전송 시작 ---")
     webhook_url = os.environ['SLACK_WEBHOOK_URL']
-    payload = {"text": final_message_with_link}
-    
-    slack_res = requests.post(webhook_url, json=payload)
-    
-    if slack_res.status_code == 200:
-        print("✅ 슬랙 전송 성공!")
+
+    # =========================================================
+    # 2. 메인 루프: 적합한 아티클을 찾을 때까지 반복합니다.
+    # =========================================================
+    for index, row in target_rows.iterrows():
+        update_row_index = int(index) + 2
+        project_title = row[COL_TITLE]
+        target_url = row[COL_URL]
         
+        print(f"\n🔍 {update_row_index}행의 아티클을 검토하고 있습니다: {project_title}")
+
         try:
-            # status 컬럼 인덱스 찾기 (+1 보정)
-            status_col_index = headers.index(COL_STATUS) + 1
+            # 3. 웹 스크래핑
+            headers_ua = {'User-Agent': 'Mozilla/5.0'}
+            resp = requests.get(target_url, headers=headers_ua, timeout=15)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            paragraphs = soup.find_all(['p', 'h2', 'h3'])
+            text_content = " ".join([p.get_text().strip() for p in paragraphs if len(p.get_text().strip()) > 20])
+            truncated_text = text_content[:3500]
+
+            # 4. ANTIEGG 정체성 판단
+            identity_prompt = f"""
+            안녕하세요, 당신은 프리랜서 에디터 공동체 'ANTIEGG'의 편집장입니다. 
+            아래 내용을 읽고 ANTIEGG의 정체성에 부합하는지 매우 엄격하게 판단해 주세요.
+
+            [판단 기준]
+            1. 필수 주제 (다음 중 하나라도 직접적인 관련이 있어야 합니다):
+               - 콘텐츠 마케팅: 브랜드 전략, 비평 등
+               - 글쓰기: 스토리텔링, 에디팅 스킬, 에디터의 성장 인사이트 등
+               - 브랜드: 브랜드 정체성, 브랜딩 사례, 브랜드 간 협업 등
+               - 문화: 문화예술 트렌드, 사회적 현상에 대한 담론, 라이프스타일 분석 등
+            2. 필수 가치: '연대와 커뮤니티의 가치'가 담겨 있나요? (함께 토론할 만한 담론형 주제)
+
+            [사례 학습 (Few-Shot)]
+            - ✅ 적합: '네이버와 돌고래유괴단 협업', '제로클릭 시대의 마케팅', '마케터의 커뮤니티 운영 회고'.
+            - ❌ 부적합: '채팅 상담 개선기(UX/CS)', '무인 창업 아이템 추천', '단순 앱 프로젝트 성공기', '단순 채용 공고', '기업 성과 보도자료'.
+
+            [글 내용]
+            {truncated_text}
+
+            출력 포맷(JSON): {{"is_appropriate": true/false, "reason": "위 기준과 사례를 바탕으로 판단 이유를 정중하게 설명해 주세요."}}
+            """
+            check_res = client_openai.chat.completions.create(
+                model="gpt-4o-mini",
+                response_format={ "type": "json_object" },
+                messages=[{"role": "system", "content": "당신은 ANTIEGG의 정체성을 수호하는 엄격하고 전문적인 편집장입니다."},
+                          {"role": "user", "content": identity_prompt}]
+            )
+            judgment = json.loads(check_res.choices[0].message.content)
+            is_appropriate = judgment.get("is_appropriate", False)
             
-            print(f"▶ 시트 상태 업데이트 중... (행: {update_row_index}, 열: {status_col_index})")
-            sheet.update_cell(update_row_index, status_col_index, 'published')
-            print("✅ 상태 변경 완료 (archived -> published)")
+            sheet.update_cell(update_row_index, identity_col_idx, str(is_appropriate).upper())
+
+            if not is_appropriate:
+                print(f"⚠️ 부적합 판정: {judgment.get('reason')}")
+                continue
+
+            # 5. 슬랙 메시지 생성
+            print(f"✨ 적합 판정: 요약 메시지 생성을 시작합니다.")
+            
+            # [수정 사항 2] '에디터'를 중심으로 한 추천사 생성 로직 반영
+            summary_prompt = f"""
+            당신은 ANTIEGG의 인사이트 큐레이터입니다. 지적이고 세련된 어투로 아래 글을 소개해 주세요.
+
+            1. key_points: 본문의 핵심 맥락을 짚어주는 4개의 문장을 작성해 주세요.
+            2. recommendations: 이 글이 꼭 필요한 에디터를 3가지 유형으로 제안해 주세요. 
+               - **핵심 지침**: 추천 대상은 반드시 '에디터'의 업무, 고민, 성장과 연결되어야 합니다.
+               - 추천 문구 예시: "새로운 브랜드 스토리텔링 방식을 고민하는 분", "글의 깊이를 더할 문화적 관점이 필요한 분"
+               - 추천 대상 끝맺음: "~한 분" (예: ~하는 분, ~를 찾는 분)
+               - 주의: 기업 리소스 효율화 관련 내용은 제외해 주세요.
+
+            어투: 매우 정중하고 지적인 경어체 (~합니다, ~해드립니다).
+            [글 내용]
+            {truncated_text}
+
+            출력 포맷(JSON): {{"key_points": [], "recommendations": []}}
+            """
+            
+            summary_res = client_openai.chat.completions.create(
+                model="gpt-4o-mini",
+                response_format={ "type": "json_object" },
+                messages=[{"role": "system", "content": "당신은 지적이고 다정한 ANTIEGG의 큐레이터입니다. 모든 추천은 동료 에디터를 향합니다."},
+                          {"role": "user", "content": summary_prompt}]
+            )
+            gpt_res = json.loads(summary_res.choices[0].message.content)
+            
+            # 6. 슬랙 전송
+            blocks = [
+                {"type": "header", "text": {"type": "plain_text", "text": "지금 주목해야 할 아티클", "emoji": True}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": f"*{project_title}*"}},
+                {"type": "divider"},
+                {"type": "section", "text": {"type": "mrkdwn", "text": "📌 *이 글에서 이야기하는 것들*\n" + "\n".join([f"• {p}" for p in gpt_res.get('key_points', [])])}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": "📌 *이런 분께 추천해요*\n" + "\n".join([f"• {p}" for p in gpt_res.get('recommendations', [])])}},
+                {"type": "divider"},
+                {"type": "actions", "elements": [{"type": "button", "text": {"type": "plain_text", "text": "아티클 보러가기", "emoji": True}, "style": "primary", "url": target_url}]}
+            ]
+            
+            slack_resp = requests.post(webhook_url, json={"blocks": blocks})
+
+            if slack_resp.status_code == 200:
+                print("✅ 슬랙 전송에 성공하였습니다!")
+                sheet.update_cell(update_row_index, status_col_idx, 'published')
+                break 
+            else:
+                print(f"❌ 전송 실패 (에러: {slack_resp.status_code})")
+                sheet.update_cell(update_row_index, status_col_idx, 'failed')
+                break
+
         except Exception as e:
-            print(f"⚠️ 상태 업데이트 실패: {e}")
-            
-    else:
-        print(f"❌ 전송 실패 (상태 코드: {slack_res.status_code})")
-        print(slack_res.text)
+            print(f"❌ 오류 발생: {e}")
+            sheet.update_cell(update_row_index, status_col_idx, 'failed')
+            continue
 
 except Exception as e:
-    print(f"🚨 전체 실행 중 에러 발생: {e}")
+    print(f"❌ 치명적 오류: {e}")
+finally:
+    print("--- [Mix Sender] 프로세스가 종료되었습니다 ---")
