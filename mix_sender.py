@@ -109,9 +109,9 @@ try:
         text_list = [p.get_text().strip() for p in paragraphs if p.get_text().strip()]
         full_text = " ".join(text_list)
         
+        # [4번 스크래핑 섹션 끝부분]
         if len(full_text) < 50:
              print("⚠️ 본문 내용이 너무 짧습니다. (스크래핑 실패 가능성)")
-             # 필요 시 여기서 exit() 할 수도 있음
              
         truncated_text = full_text[:3000]
         
@@ -120,39 +120,38 @@ try:
         exit()
 
     # =========================================================
-# 5. GPT 요약 (JSON 출력 모드 적용)
-# =========================================================
-print("--- GPT 요약 요청 ---")
-client_openai = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
+    # 5. GPT 요약 (JSON 출력 모드 적용)
+    # =========================================================
+    print("--- GPT 요약 요청 ---")
+    client_openai = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
 
-# 이미지와 같은 구성을 위해 리스트(배열) 형태로 응답받도록 프롬프트 수정
-gpt_prompt = f"""
-너는 IT/테크 트렌드를 분석해주는 '인사이트 큐레이터'야.
-아래 [글 내용]을 읽고, 팀원들에게 공유할 수 있게 핵심 내용을 요약해줘.
+    gpt_prompt = f"""
+    너는 IT/테크 트렌드를 분석해주는 '인사이트 큐레이터'야.
+    아래 [글 내용]을 읽고, 팀원들에게 공유할 수 있게 핵심 내용을 요약해줘.
 
-[출력 양식 (반드시 아래 JSON 형식으로만 응답할 것)]
-{{
-  "key_points": ["핵심 내용 1", "핵심 내용 2", "핵심 내용 3", "핵심 내용 4"],
-  "recommendations": ["추천 이유 1", "추천 이유 2", "추천 이유 3"]
-}}
+    [출력 양식 (반드시 아래 JSON 형식으로만 응답할 것)]
+    {{
+      "key_points": ["핵심 내용 1", "핵심 내용 2", "핵심 내용 3", "핵심 내용 4"],
+      "recommendations": ["추천 이유 1", "추천 이유 2", "추천 이유 3"]
+    }}
 
-[글 내용]
-{truncated_text}
-"""
+    [글 내용]
+    {truncated_text}
+    """
 
-completion = client_openai.chat.completions.create(
-    model="gpt-3.5-turbo-0125",  # JSON 모드 지원 모델
-    response_format={ "type": "json_object" },
-    messages=[
-        {"role": "system", "content": "You are a helpful assistant that outputs JSON."},
-        {"role": "user", "content": gpt_prompt}
-    ]
-)
-
-# GPT 결과 파싱
-gpt_res = json.loads(completion.choices[0].message.content)
-key_points = gpt_res.get("key_points", [])
-recommendations = gpt_res.get("recommendations", [])
+    completion = client_openai.chat.completions.create(
+        model="gpt-3.5-turbo-0125",
+        response_format={{ "type": "json_object" }}, # f-string 안이라서 중괄호를 두 번 {{ }} 써야 할 수 있습니다.
+        messages=[
+            {{"role": "system", "content": "You are a helpful assistant that outputs JSON."}},
+            {{"role": "user", "content": gpt_prompt}}
+        ]
+    )
+    
+    # 결과 파싱
+    gpt_res = json.loads(completion.choices[0].message.content)
+    key_points = gpt_res.get("key_points", [])
+    recommendations = gpt_res.get("recommendations", [])
 
 # =========================================================
 # 6. 슬랙 전송 (Block Kit UI 구성)
