@@ -81,18 +81,32 @@ try:
             text_content = " ".join([p.get_text().strip() for p in paragraphs if len(p.get_text().strip()) > 20])
             truncated_text = text_content[:3500]
 
-            # 4. ANTIEGG 정체성 판단 (엄격한 기준 및 사례 반영)
+            # 4. ANTIEGG 정체성 판단
             identity_prompt = f"""
             안녕하세요, 당신은 프리랜서 에디터 공동체 'ANTIEGG'의 편집장입니다. 
-            아래 내용을 읽고 정체성(콘텐츠 마케팅, 글쓰기, 브랜드, 문화 담론)에 부합하는지 엄격히 판단해 주세요.
-            [사례] ✅ 적합: 브랜드 협업 분석, 광고 비평, 에디터 회고 / ❌ 부적합: 단순 기능 개선, 창업 아이템 추천.
-            [글 내용] {truncated_text}
-            출력 포맷(JSON): {{"is_appropriate": true/false, "reason": "이유 설명"}}
+            아래 내용을 읽고 ANTIEGG의 정체성에 부합하는지 매우 엄격하게 판단해 주세요.
+
+            [판단 기준]
+            1. 필수 주제 (다음 중 하나라도 직접적인 관련이 있어야 합니다):
+               - 콘텐츠 마케팅: 브랜드 전략, 비평 등
+               - 글쓰기: 스토리텔링, 에디팅 스킬, 에디터의 성장 인사이트 등
+               - 브랜드: 브랜드 정체성, 브랜딩 사례, 브랜드 간 협업 등
+               - 문화: 문화예술 트렌드, 사회적 현상에 대한 담론, 라이프스타일 분석 등
+            2. 필수 가치: '연대와 커뮤니티의 가치'가 담겨 있나요? (함께 토론할 만한 담론형 주제)
+
+            [사례 학습 (Few-Shot)]
+            - ✅ 적합: '네이버와 돌고래유괴단 협업', '제로클릭 시대의 마케팅', '마케터의 커뮤니티 운영 회고'.
+            - ❌ 부적합: '채팅 상담 개선기(UX/CS)', '무인 창업 아이템 추천', '단순 앱 프로젝트 성공기', '단순 채용 공고', '기업 성과 보도자료'.
+
+            [글 내용]
+            {truncated_text}
+
+            출력 포맷(JSON): {{"is_appropriate": true/false, "reason": "위 기준과 사례를 바탕으로 판단 이유를 정중하게 설명해 주세요."}}
             """
             check_res = client_openai.chat.completions.create(
                 model="gpt-4o-mini",
                 response_format={ "type": "json_object" },
-                messages=[{"role": "system", "content": "당신은 ANTIEGG의 엄격한 편집장입니다."},
+                messages=[{"role": "system", "content": "당신은 ANTIEGG의 정체성을 수호하는 엄격하고 전문적인 편집장입니다."},
                           {"role": "user", "content": identity_prompt}]
             )
             judgment = json.loads(check_res.choices[0].message.content)
