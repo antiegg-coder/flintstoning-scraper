@@ -25,8 +25,8 @@ try:
 
     spreadsheet = client.open('플린트스토닝 소재 DB')
     
-    # GID 1818966683 기반 시트 선택
-    TARGET_GID = 1818966683
+    # GID 639559541 기반 시트 선택
+    TARGET_GID = 639559541
     sheet = next((s for s in spreadsheet.worksheets() if s.id == TARGET_GID), None)
     
     if not sheet:
@@ -65,7 +65,7 @@ try:
         raw_title = row[COL_TITLE]
         target_url = row[COL_URL]
         
-        # [수정] 지역 및 경력 정보를 시트에서 직접 참조
+        # 지역 및 경력 정보를 시트에서 직접 참조
         sheet_location = row.get(COL_LOCATION, "정보 없음").strip() or "정보 없음"
         sheet_experience = row.get(COL_EXPERIENCE, "경력 무관").strip() or "경력 무관"
         
@@ -82,7 +82,9 @@ try:
                 'Upgrade-Insecure-Requests': '1'
             }
 
+            # 봇 감지 방지 랜덤 대기
             time.sleep(random.uniform(2.5, 4.5))
+
             resp = session.get(target_url, headers=headers_ua, timeout=15)
             resp.raise_for_status()
             
@@ -107,11 +109,11 @@ try:
             time.sleep(1)
             sheet.update_cell(update_row_index, identity_col_idx, str(judgment['is_appropriate']).upper())
 
-            if not judgment['is_appropriate']:
+            if not judgment.get('is_appropriate', False):
                 print(f"⚠️ 부적합 판정으로 스킵합니다.")
                 continue
 
-            # 5. [슬랙 생성] 이미지 UI 기반 데이터 추출 (지역/경력 추론 제외)
+            # 5. [슬랙 생성] 이미지 UI 기반 데이터 추출
             summary_prompt = f"""
             동료 에디터들을 위해 채용 공고 요약을 작성해 주세요. 
             [지침]:
@@ -131,7 +133,7 @@ try:
             )
             gpt_res = json.loads(summary_res.choices[0].message.content)
             
-            # 6. 슬랙 전송 (이미지 UI 재현 + 시트 데이터 반영)
+            # 6. 슬랙 전송 (이미지 UI 재현)
             blocks = [
                 {"type": "section", "text": {"type": "mrkdwn", "text": "*오늘 올라온 채용 공고*"}},
                 {"type": "section", "text": {"type": "mrkdwn", "text": f"*{gpt_res.get('company_job', raw_title)}*"}},
@@ -151,12 +153,15 @@ try:
                 {"type": "actions", "elements": [{"type": "button", "text": {"type": "plain_text", "text": "상세 공고 보러가기", "emoji": True}, "style": "primary", "url": target_url}]}
             ]
             
-            requests.post(webhook_url, json={"blocks": blocks})
+            slack_resp = requests.post(webhook_url, json={"blocks": blocks})
             
-            time.sleep(1)
-            sheet.update_cell(update_row_index, status_col_idx, 'published')
-            print(f"✅ 전송 성공: {raw_title}")
-            break 
+            if slack_resp.status_code == 200:
+                time.sleep(1)
+                sheet.update_cell(update_row_index, status_col_idx, 'published')
+                print(f"✅ 전송 성공: {raw_title}")
+                break 
+            else:
+                print(f"❌ 슬랙 전송 실패: {slack_resp.status_code}")
 
         except Exception as e:
             print(f"❌ 처리 오류: {e}")
