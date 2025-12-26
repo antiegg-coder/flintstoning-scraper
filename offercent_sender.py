@@ -6,222 +6,163 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from openai import OpenAI
+import random
+import time
 
 # =========================================================
 # 1. 설정 및 인증
 # =========================================================
-def main():
-    try:
-        print("--- [Offercent Sender] 시작 ---")
+try:
+    print("--- [Recruit Sender] 채용 공고 프로세스를 시작합니다 ---")
+    
+    if 'GOOGLE_CREDENTIALS' not in os.environ:
+        raise Exception("환경변수 GOOGLE_CREDENTIALS가 설정되지 않았습니다.")
+
+    creds_dict = json.loads(os.environ['GOOGLE_CREDENTIALS'])
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    client = gspread.authorize(creds)
+
+    spreadsheet = client.open('플린트스토닝 소재 DB')
+    
+    # GID 1818966683 기반 시트 선택
+    TARGET_GID = 1818966683
+    sheet = next((s for s in spreadsheet.worksheets() if s.id == TARGET_GID), None)
+    
+    if not sheet:
+        raise Exception(f"GID가 {TARGET_GID}인 워크시트를 찾을 수 없습니다.")
+    
+    data = sheet.get_all_values()
+    headers = [h.strip() for h in data[0]]
+    df = pd.DataFrame(data[1:], columns=headers)
+
+    # 컬럼 설정 (시트의 실제 헤더명과 일치해야 합니다)
+    COL_STATUS = 'status'
+    COL_IDENTITY = 'identity_match'
+    COL_TITLE = 'title'     
+    COL_URL = 'url'         
+    COL_LOCATION = 'location' 
+    COL_EXPERIENCE = 'experience'
+
+    target_rows = df[df[COL_STATUS].str.strip().str.lower() == 'archived']
+
+    if target_rows.empty:
+        print("ℹ️ 'archived' 상태의 공고가 없습니다.")
+        exit()
+
+    identity_col_idx = headers.index(COL_IDENTITY) + 1
+    status_col_idx = headers.index(COL_STATUS) + 1
+    client_openai = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
+    webhook_url = os.environ['SLACK_WEBHOOK_URL']
+    
+    session = requests.Session()
+
+    # =========================================================
+    # 2. 메인 루프
+    # =========================================================
+    for index, row in target_rows.iterrows():
+        update_row_index = int(index) + 2
+        raw_title = row[COL_TITLE]
+        target_url = row[COL_URL]
         
-        # 환경 변수에서 설정값 로드
-        if 'GOOGLE_CREDENTIALS' not in os.environ:
-            raise ValueError("GOOGLE_CREDENTIALS 환경 변수가 설정되지 않았습니다.")
-        if 'OPENAI_API_KEY' not in os.environ:
-            raise ValueError("OPENAI_API_KEY 환경 변수가 설정되지 않았습니다.")
-        if 'SLACK_WEBHOOK_URL' not in os.environ:
-            raise ValueError("SLACK_WEBHOOK_URL 환경 변수가 설정되지 않았습니다.")
-
-        json_creds = os.environ['GOOGLE_CREDENTIALS']
-        creds_dict = json.loads(json_creds)
-        scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        client = gspread.authorize(creds)
-
-        # 시트 열기
-        spreadsheet = client.open('플린트스토닝 소재 DB') 
+        # [수정] 지역 및 경력 정보를 시트에서 직접 참조
+        sheet_location = row.get(COL_LOCATION, "정보 없음").strip() or "정보 없음"
+        sheet_experience = row.get(COL_EXPERIENCE, "경력 무관").strip() or "경력 무관"
         
-        # 네 번째 탭 선택 (Index 3)
-        sheet = spreadsheet.get_worksheet(3)
-
-        # 데이터 가져오기
-        data = sheet.get_all_values()
-        if not data:
-            print("데이터가 없습니다.")
-            return
-
-        headers = data.pop(0)
-        df = pd.DataFrame(data, columns=headers)
-
-        # =========================================================
-        # 2. 필터링 (F열: archived, publish: TRUE)
-        # =========================================================
-        # 안전을 위해 컬럼 인덱스 대신 이름을 확인할 수도 있으나, 
-        # 기존 로직(5번 인덱스=F열)을 유지하되 예외처리를 강화합니다.
-        if len(df.columns) <= 5:
-            print("열 개수가 부족합니다. (F열 필요)")
-            return
-
-        col_status_name = df.columns[5] # F열 (보통 'status' 또는 'archive')
-        
-        # 공백 제거 및 조건 확인
-        condition = (df[col_status_name].str.strip() == 'archived') & (df['publish'].str.strip() == 'TRUE')
-        target_rows = df[condition]
-
-        if target_rows.empty:
-            print("발송할 대상(archived & publish=TRUE)이 없습니다.")
-            return
-
-        # 첫 번째 행 선택
-        row = target_rows.iloc[0]
-        update_row_index = row.name + 2 # 헤더(1) + 0-based index 보정(1)
-        
-        print(f"▶ 선택된 행 번호: {update_row_index}")
-
-        # =========================================================
-        # 3. 데이터 추출
-        # =========================================================
-        
-        # 시트 헤더 이름 설정 (실제 시트 헤더와 일치해야 함)
-        title_col_name = 'title' 
-        url_col_name = 'url'
-        company_col_name = 'company' 
-        # 만약 '포지션' 칼럼이 따로 있다면 여기에 추가 (현재는 title로 대체)
-
-        missing_cols = [c for c in [title_col_name, url_col_name] if c not in row]
-        if missing_cols:
-            print(f"오류: 엑셀 헤더 이름({', '.join(missing_cols)})을 확인해주세요.")
-            return
-
-        project_title = row[title_col_name]
-        target_url = row[url_col_name]
-        
-        # 회사명 처리
-        if company_col_name in row and row[company_col_name]:
-            company_name = row[company_col_name]
-        else:
-            print(f"⚠️ 경고: 회사명이 없어 'Company'로 대체합니다.")
-            company_name = "Company"
-
-        print(f"▶ [Offercent] 회사명: {company_name}")
-        print(f"▶ [Offercent] 제목: {project_title}")
-        print(f"▶ URL: {target_url}")
-
-        # =========================================================
-        # 4. 웹 스크래핑 (Offercent 맞춤)
-        # =========================================================
-        print("--- 스크래핑 시작 ---")
-        headers_ua = {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-        
-        try:
-            response = requests.get(target_url, headers=headers_ua, timeout=15)
-            response.raise_for_status()
-        except Exception as e:
-            print(f"❌ 접속 실패: {e}")
-            return
-
-        soup = BeautifulSoup(response.text, 'html.parser')
-
-        # 본문 영역 타겟팅 (Offercent 구조 고려)
-        content_area = soup.find('main') or soup.find('article') or soup.find('div', {'class': 'description'})
-        
-        if not content_area:
-            print("⚠️ 특정 본문 영역을 찾지 못해 전체 페이지에서 텍스트를 추출합니다.")
-            content_area = soup
-
-        # 불필요한 태그 제거
-        for tag in content_area(['script', 'style', 'nav', 'footer', 'iframe']):
-            tag.extract()
-
-        # 텍스트 추출
-        full_text = content_area.get_text(separator="\n", strip=True)
-        truncated_text = full_text[:6000] # GPT 입력 한도 고려
-
-        if len(truncated_text) < 50:
-            print("⚠️ 수집된 텍스트가 너무 적습니다. (JavaScript 로딩 페이지일 가능성 있음)")
-            # 필요 시 여기서 Selenium 로직으로 분기 가능
-
-        # =========================================================
-        # 5. GPT 분석 (연차 추출 + 요약)
-        # =========================================================
-        print("--- GPT 분석 요청 ---")
-        client_openai = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
-
-        gpt_prompt = f"""
-        [역할]
-        너는 스타트업 채용 정보를 분석하여 핵심 정보를 추출하고, 매력적인 소개글을 작성하는 에디터야.
-
-        [지시 사항]
-        아래 [채용 공고 본문]을 읽고 다음 정보를 JSON 포맷으로 추출해줘.
-
-        1. **required_exp**: 지원 자격에 명시된 '경력/연차' 요건을 짧게 추출. (예: "신입", "3년 이상", "5~7년", "무관" 등)
-        2. **summary**: 이 포지션의 주요 업무와 회사의 매력을 구직자에게 어필하듯 부드러운 '해요'체로 2~3문장 요약.
-
-        [출력 예시 - JSON]
-        {{
-            "required_exp": "3년 이상",
-            "summary": "글로벌 핀테크 서비스의 서버 개발을 담당해요. 자율적인 근무 환경과 최신 기술 스택을 경험할 수 있는 기회입니다."
-        }}
-
-        [채용 공고 본문]
-        {truncated_text}
-        """
+        print(f"\n🔍 {update_row_index}행 검토 중: {raw_title}")
 
         try:
-            completion = client_openai.chat.completions.create(
-                model="gpt-4o",  # JSON 모드 사용을 위해 gpt-4o 또는 gpt-4-turbo 권장
-                messages=[
-                    {"role": "system", "content": "JSON 형식으로만 응답하세요."},
-                    {"role": "user", "content": gpt_prompt}
-                ],
-                response_format={"type": "json_object"}, 
-                temperature=0.3,
+            # 3. [403 Forbidden 해결] 강력한 브라우저 위장 및 랜덤 대기
+            headers_ua = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+                'Referer': 'https://www.google.com/',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1'
+            }
+
+            time.sleep(random.uniform(2.5, 4.5))
+            resp = session.get(target_url, headers=headers_ua, timeout=15)
+            resp.raise_for_status()
+            
+            soup = BeautifulSoup(resp.text, 'html.parser')
+            text_content = " ".join([p.get_text().strip() for p in soup.find_all(['p', 'h2', 'h3', 'li', 'span', 'div']) if len(p.get_text().strip()) > 10])
+            truncated_text = text_content[:3800]
+
+            # 4. [적합성 판단] 채용 공고 여부 및 에디팅 직무 필터링
+            identity_prompt = f"""
+            당신은 에디터 공동체의 커리어 큐레이터입니다. 아래 글이 에디터가 지원할 만한 '정식 채용 공고'인지 판단하세요.
+            [기준] 콘텐츠 에디터, 기획자, 뉴스레터 작가 등 '텍스트/콘텐츠' 중심 직무가 포함되어야 합니다.
+            [내용] {truncated_text}
+            출력 포맷(JSON): {{"is_appropriate": true/false}}
+            """
+            check_res = client_openai.chat.completions.create(
+                model="gpt-4o-mini",
+                response_format={ "type": "json_object" },
+                messages=[{"role": "user", "content": identity_prompt}]
             )
+            judgment = json.loads(check_res.choices[0].message.content)
             
-            gpt_response = completion.choices[0].message.content
-            gpt_data = json.loads(gpt_response)
+            time.sleep(1)
+            sheet.update_cell(update_row_index, identity_col_idx, str(judgment['is_appropriate']).upper())
 
-            extracted_exp = gpt_data.get('required_exp', '공고 본문 확인')
-            extracted_summary = gpt_data.get('summary', '요약을 생성하지 못했습니다.')
+            if not judgment['is_appropriate']:
+                print(f"⚠️ 부적합 판정으로 스킵합니다.")
+                continue
+
+            # 5. [슬랙 생성] 이미지 UI 기반 데이터 추출 (지역/경력 추론 제외)
+            summary_prompt = f"""
+            동료 에디터들을 위해 채용 공고 요약을 작성해 주세요. 
+            [지침]:
+            1. company_job: "[회사명] 직무명" 형식의 제목을 본문에서 찾아 작성하세요.
+            2. roles: 주요 역할 3가지.
+            3. requirements: 요구 역량 3가지.
+            4. preferences: 우대 사항 2~3가지.
+            5. recommendations: 에디터에게 추천하는 이유 3가지 (끝맺음: "~한 분", '에디터' 단어 사용 금지).
+
+            [내용] {truncated_text}
+            출력 포맷(JSON): {{"company_job": "", "roles": [], "requirements": [], "preferences": [], "recommendations": []}}
+            """
+            summary_res = client_openai.chat.completions.create(
+                model="gpt-4o-mini",
+                response_format={ "type": "json_object" },
+                messages=[{"role": "user", "content": summary_prompt}]
+            )
+            gpt_res = json.loads(summary_res.choices[0].message.content)
+            
+            # 6. 슬랙 전송 (이미지 UI 재현 + 시트 데이터 반영)
+            blocks = [
+                {"type": "section", "text": {"type": "mrkdwn", "text": "*오늘 올라온 채용 공고*"}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": f"*{gpt_res.get('company_job', raw_title)}*"}},
+                {
+                    "type": "section",
+                    "fields": [
+                        {"type": "mrkdwn", "text": f"*지역*\n{sheet_location}"},
+                        {"type": "mrkdwn", "text": f"*경력*\n{sheet_experience}"}
+                    ]
+                },
+                {"type": "divider"},
+                {"type": "section", "text": {"type": "mrkdwn", "text": "📌 *주요 역할*\n" + "\n".join([f"• {r}" for r in gpt_res.get('roles', [])])}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": "📌 *요구 역량*\n" + "\n".join([f"• {req}" for req in gpt_res.get('requirements', [])])}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": "📌 *우대 사항*\n" + "\n".join([f"• {p}" for p in gpt_res.get('preferences', [])])}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": "📌 *이런 분께 추천해요*\n" + "\n".join([f"• {rec}" for rec in gpt_res.get('recommendations', [])])}},
+                {"type": "divider"},
+                {"type": "actions", "elements": [{"type": "button", "text": {"type": "plain_text", "text": "상세 공고 보러가기", "emoji": True}, "style": "primary", "url": target_url}]}
+            ]
+            
+            requests.post(webhook_url, json={"blocks": blocks})
+            
+            time.sleep(1)
+            sheet.update_cell(update_row_index, status_col_idx, 'published')
+            print(f"✅ 전송 성공: {raw_title}")
+            break 
 
         except Exception as e:
-            print(f"⚠️ GPT 처리 중 오류 발생: {e}")
-            extracted_exp = "확인 필요"
-            extracted_summary = "요약 생성 실패 (본문 내용을 확인해주세요)"
+            print(f"❌ 처리 오류: {e}")
+            continue
 
-        print("--- GPT 응답 완료 ---")
-
-        # =========================================================
-        # 6. 슬랙 전송 & 시트 업데이트
-        # =========================================================
-        
-        # 메시지 조립
-        # 포맷: <오늘 올라온 채용 공고> -> 공고명 -> 기업명 -> 포지션명 -> 연차 -> 요약 -> URL(링크변환)
-        
-        slack_message = f"*<오늘 올라온 채용 공고>*\n\n"
-        slack_message += f"*{project_title}*\n\n"
-        slack_message += f"*기업명:* {company_name}\n"
-        slack_message += f"*연차:* {extracted_exp}\n\n"
-        slack_message += f"*요약*\n{extracted_summary}\n\n"
-        slack_message += f"🔗 <{target_url}|공고 바로가기>"
-
-        print("--- 최종 메시지 미리보기 ---")
-        print(slack_message)
-
-        print("--- 슬랙 전송 시작 ---")
-        webhook_url = os.environ['SLACK_WEBHOOK_URL']
-        
-        payload = {"text": slack_message}
-        slack_res = requests.post(webhook_url, json=payload)
-
-        if slack_res.status_code == 200:
-            print("✅ 슬랙 전송 성공!")
-            
-            try:
-                # 상태 업데이트 (F열 = 6번째 열)
-                print(f"▶ 시트 업데이트 중... (행: {update_row_index}, 열: 6)")
-                sheet.update_cell(update_row_index, 6, 'published')
-                print("✅ 상태 변경 완료 (archived -> published)")
-            except Exception as e:
-                print(f"⚠️ 시트 업데이트 실패: {e}")
-        else:
-            print(f"❌ 전송 실패 (Code: {slack_res.status_code})")
-            print(slack_res.text)
-
-    except Exception as e:
-        print(f"\n❌ 에러 발생: {e}")
-
-if __name__ == "__main__":
-    main()
+except Exception as e:
+    print(f"❌ 치명적 오류: {e}")
+finally:
+    print("--- 모든 프로세스가 종료되었습니다 ---")
