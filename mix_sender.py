@@ -22,7 +22,7 @@ try:
     client = gspread.authorize(creds)
 
     spreadsheet = client.open('플린트스토닝 소재 DB')
-    sheet = spreadsheet.get_worksheet(2)
+    sheet = spreadsheet.get_worksheet(2) # 세 번째 탭
     
     data = sheet.get_all_values()
     headers = [h.strip() for h in data[0]]
@@ -33,7 +33,6 @@ try:
     COL_TITLE = 'title'
     COL_URL = 'url'
 
-    # status가 'archived'인 모든 행 추출
     target_rows = df[df[COL_STATUS].str.strip().str.lower() == 'archived']
 
     if target_rows.empty:
@@ -46,7 +45,7 @@ try:
     webhook_url = os.environ['SLACK_WEBHOOK_URL']
 
     # =========================================================
-    # 2. 루프 시작: 적합한 아티클을 찾을 때까지 반복
+    # 2. 메인 루프: 적합한 콘텐츠를 찾을 때까지 반복
     # =========================================================
     for index, row in target_rows.iterrows():
         update_row_index = int(index) + 2
@@ -56,7 +55,7 @@ try:
         print(f"\n🔍 검토 중 ({update_row_index}행): {project_title}")
 
         try:
-            # 웹 스크래핑
+            # 3. 스크래핑
             headers_ua = {'User-Agent': 'Mozilla/5.0'}
             resp = requests.get(target_url, headers=headers_ua, timeout=15)
             resp.raise_for_status()
@@ -65,12 +64,12 @@ try:
             text_content = " ".join([p.get_text().strip() for p in paragraphs if len(p.get_text().strip()) > 20])
             truncated_text = text_content[:3500]
 
-            # 정체성 판단
+            # 4. ANTIEGG 정체성 판단
             identity_prompt = f"""
             너는 문화예술 및 테크 미디어 'ANTIEGG'의 편집장이야. 
-            아래 [글 내용]이 ANTIEGG의 정체성에 부합하는지 판단해줘.
-            [글 내용]: {truncated_text}
-            [출력 양식 (JSON)]: {{"is_appropriate": true/false, "reason": "문장"}}
+            아래 내용을 읽고 ANTIEGG의 정체성(기존 관점을 뒤틀고 영감을 주는 인사이트)에 부합하는지 판단해.
+            내용: {truncated_text}
+            출력 포맷(JSON): {{"is_appropriate": true/false, "reason": "한 문장 설명"}}
             """
             check_res = client_openai.chat.completions.create(
                 model="gpt-4o-mini",
@@ -83,25 +82,62 @@ try:
             if not judgment.get("is_appropriate", False):
                 print(f"⚠️ 부적합: {judgment.get('reason')}")
                 sheet.update_cell(update_row_index, publish_col_idx, 'FALSE')
-                continue # 다음 행으로 넘어감
+                continue
 
-            # 적합할 경우 요약 및 슬랙 전송
-            print(f"✨ 적합: {judgment.get('reason')}")
+            # 5. 슬랙 메시지 최적화 생성 (이미지 분석 결과 반영)
+            print(f"✨ 적합 판정: 요약 생성을 시작합니다.")
             
-            gpt_summary_prompt = f"아래 내용을 요약해줘: {truncated_text}"
+            summary_prompt = f"""
+            너는 ANTIEGG의 수석 에디터야. 독자들에게 지적 영감을 주는 스타일로 아래 글을 요약해줘.
+            
+            1. key_points: 단순 요약이 아닌 '배경-원리-방향'의 맥락이 담긴 4개 문장.
+            2. recommendations: 이 글이 독자의 사고를 어떻게 확장시키는지 에디터의 시선에서 작성한 3개 문장.
+            
+            어투: 전문적이고 지적인 경어체 (~합니다, ~해줍니다).
+            내용: {truncated_text}
+            
+            출력 포맷(JSON): {{"key_points": [], "recommendations": []}}
+            """
+            
             summary_res = client_openai.chat.completions.create(
                 model="gpt-4o-mini",
                 response_format={ "type": "json_object" },
-                messages=[{"role": "system", "content": "You are a helpful assistant. Output JSON with 'key_points' and 'recommendations'."},
-                          {"role": "user", "content": gpt_summary_prompt}]
+                messages=[{"role": "system", "content": "You are a lead editor at ANTIEGG. Use polite and intellectual Korean."},
+                          {"role": "user", "content": summary_prompt}]
             )
             gpt_res = json.loads(summary_res.choices[0].message.content)
             
+            # 6. 슬랙 전송 (이미지 레이아웃 재현)
             blocks = [
-                {"type": "header", "text": {"type": "plain_text", "text": "🚀 ANTIEGG 큐레이션"}},
-                {"type": "section", "text": {"type": "mrkdwn", "text": f"*<{target_url}|{project_title}>*"}},
+                {
+                    "type": "header",
+                    "text": {"type": "plain_text", "text": "지금 주목해야 할 아티클", "emoji": True}
+                },
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": f"*{project_title}*"}
+                },
                 {"type": "divider"},
-                {"type": "section", "text": {"type": "mrkdwn", "text": f"📌 *핵심 요약*\n" + "\n".join([f"• {p}" for p in gpt_res.get('key_points', [])])}}
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "📌 *이 글에서 이야기하는 것들*\n" + "\n".join([f"• {p}" for p in gpt_res.get('key_points', [])])}
+                },
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "📌 *이런 분께 추천해요*\n" + "\n".join([f"• {p}" for p in gpt_res.get('recommendations', [])])}
+                },
+                {"type": "divider"},
+                {
+                    "type": "actions",
+                    "elements": [
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": "아티클 보러가기", "emoji": True},
+                            "style": "primary",
+                            "url": target_url
+                        }
+                    ]
+                }
             ]
             
             slack_resp = requests.post(webhook_url, json={"blocks": blocks})
@@ -110,15 +146,15 @@ try:
                 print("✅ 슬랙 전송 성공!")
                 sheet.update_cell(update_row_index, status_col_idx, 'published')
                 sheet.update_cell(update_row_index, publish_col_idx, 'DONE')
-                break # 전송 성공 시 루프 종료
+                break # 한 개 성공 시 종료
             else:
                 print(f"❌ 슬랙 전송 실패 (HTTP {slack_resp.status_code})")
 
         except Exception as e:
-            print(f"❌ {update_row_index}행 처리 중 오류 발생: {e}")
+            print(f"❌ {update_row_index}행 처리 오류: {e}")
             continue
 
 except Exception as e:
     print(f"❌ 치명적 오류: {e}")
 finally:
-    print("\n--- [Mix Sender] 프로세스 종료 ---")
+    print("--- [Mix Sender] 프로세스 종료 ---")
