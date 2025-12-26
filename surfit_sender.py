@@ -12,7 +12,7 @@ import time  # API 할당량 초과 방지를 위해 필수입니다.
 # 1. 설정 및 인증
 # =========================================================
 try:
-    print("--- [Mix Sender] 프로세스를 시작합니다 ---")
+    print("--- [Surfit Sender] 프로세스를 시작합니다 ---")
     
     if 'GOOGLE_CREDENTIALS' not in os.environ:
         raise Exception("환경변수 GOOGLE_CREDENTIALS가 설정되지 않았습니다.")
@@ -156,4 +156,4 @@ try:
 except Exception as e:
     print(f"❌ 치명적 오류: {e}")
 finally:
-    print("--- [Mix Sender] 프로세스가 종료되었습니다 ---")
+    print("--- [Surfit Sender] 프로세스가 종료되었습니다 ---")
