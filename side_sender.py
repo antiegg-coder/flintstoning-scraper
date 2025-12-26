@@ -40,7 +40,7 @@ try:
     COL_IDENTITY = 'identity_match'
     COL_TITLE = 'title'     
     COL_URL = 'url'         
-    COL_LOCATION = 'location' # 지역은 컬럼에서 불러옵니다.
+    COL_LOCATION = 'location' 
 
     target_rows = df[df[COL_STATUS].str.strip().str.lower() == 'archived']
 
@@ -60,7 +60,8 @@ try:
         update_row_index = int(index) + 2
         project_title = row[COL_TITLE]
         target_url = row[COL_URL]
-        project_location = row.get(COL_LOCATION, "온라인 (협의 가능)") # 시트에서 지역 불러오기
+        # [수정] 시트에서 지역 정보 가져오기 (비어있을 경우 빈 문자열)
+        project_location = row.get(COL_LOCATION, "").strip() 
         
         print(f"\n🔍 {update_row_index}행 검토 중: {project_title}")
 
@@ -73,7 +74,7 @@ try:
             text_content = " ".join([p.get_text().strip() for p in soup.find_all(['p', 'h2', 'h3']) if len(p.get_text().strip()) > 20])
             truncated_text = text_content[:3500]
 
-            # 4. 적합성 판단 (에디터/콘텐츠 연관성 엄격 적용)
+            # 4. 적합성 판단
             identity_prompt = f"""
             안녕하세요, 당신은 에디터 공동체 'ANTIEGG'의 프로젝트 큐레이터입니다. 
             아래 프로젝트가 에디터들이 참여하기 적합한 '콘텐츠 관련 사이드 프로젝트'인지 판단해 주세요.
@@ -99,8 +100,7 @@ try:
                 print(f"⚠️ 부적합: {judgment.get('reason')}")
                 continue
 
-            # 5. 슬랙 메시지 내용 생성 (모집 포지션 추론 포함)
-            # [5. 슬랙 메시지 생성 프롬프트 최종 수정]
+            # 5. 슬랙 메시지 내용 생성
             summary_prompt = f"""
             당신은 ANTIEGG의 프로젝트 큐레이터입니다. 동료들에게 이 프로젝트를 세련되게 소개해 주세요.
             
@@ -111,7 +111,7 @@ try:
                - **주의**: 문구 안에 '에디터'라는 단어를 직접 넣지 마세요. 
                - 대신 콘텐츠 기획, 브랜딩, 글쓰기 등 직무적 고민이 느껴지도록 작성해 주세요.
                - 끝맺음: "~한 분"으로 통일해 주세요.
-            4. inferred_location: 본문을 분석하여 '활동 지역' 추출. (온라인/오프라인 여부 포함)
+            4. inferred_location: 본문을 분석하여 '활동 지역' 추출 (예: 서울 강남, 온라인 등).
             
             어투: 매우 정중하고 지적인 경어체 (~합니다).
             [글 내용] {truncated_text}
@@ -124,8 +124,8 @@ try:
             )
             gpt_res = json.loads(summary_res.choices[0].message.content)
             
-            # [지역 정보 결정] 시트에 있으면 시트값, 없으면 GPT 추론값 사용
-            final_location = sheet_location if sheet_location else gpt_res.get('inferred_location', '온라인 (협의)')
+            # [지역 정보 결정 로직 수정] 시트값이 비어있으면 GPT 추론값 사용
+            final_location = project_location if project_location else gpt_res.get('inferred_location', '온라인 (협의)')
             
             # 6. 슬랙 전송 (이미지 UI 완벽 재현)
             blocks = [
@@ -135,7 +135,7 @@ try:
                     "type": "section",
                     "fields": [
                         {"type": "mrkdwn", "text": f"*모집 포지션*\n{gpt_res.get('inferred_role', '콘텐츠 기획자')}"},
-                        {"type": "mrkdwn", "text": f"*지역*\n{project_location}"} # 시트에서 가져온 데이터 적용
+                        {"type": "mrkdwn", "text": f"*지역*\n{final_location}"} # 결정된 최종 지역 정보 적용
                     ]
                 },
                 {"type": "divider"},
