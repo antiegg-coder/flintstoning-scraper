@@ -24,8 +24,8 @@ try:
 
     spreadsheet = client.open('플린트스토닝 소재 DB')
     
-    # [GID 981623942 기반 워크시트 선택]
-    TARGET_GID = 981623942
+    # [GID 2112710663 기반 워크시트 선택]
+    TARGET_GID = 2112710663
     sheet = None
     for s in spreadsheet.worksheets():
         if s.id == TARGET_GID:
