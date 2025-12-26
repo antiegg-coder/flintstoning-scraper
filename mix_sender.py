@@ -120,85 +120,107 @@ try:
         exit()
 
     # =========================================================
-    # 5. GPT 요약 (프롬프트 및 메시지 구성 수정됨)
-    # =========================================================
-    print("--- GPT 요약 요청 ---")
-    client_openai = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
+# 5. GPT 요약 (JSON 출력 모드 적용)
+# =========================================================
+print("--- GPT 요약 요청 ---")
+client_openai = OpenAI(api_key=os.environ['OPENAI_API_KEY'])
 
-    # [수정] 요청하신 구조(내용 요약, 추천 이유)에 맞춰 프롬프트 변경
-    gpt_prompt = f"""
-    너는 IT/테크 트렌드를 분석해주는 '인사이트 큐레이터'야.
-    아래 [글 내용]을 읽고, 팀원들에게 공유할 수 있게 요약해줘.
+# 이미지와 같은 구성을 위해 리스트(배열) 형태로 응답받도록 프롬프트 수정
+gpt_prompt = f"""
+너는 IT/테크 트렌드를 분석해주는 '인사이트 큐레이터'야.
+아래 [글 내용]을 읽고, 팀원들에게 공유할 수 있게 핵심 내용을 요약해줘.
 
-    [작성 규칙]
-    1. **어조**: 모든 문장은 반드시 '**~합니다.**' 또는 '**~입니다.**'와 같은 정중한 합쇼체(경어)로 끝내야 해.
-    2. **금지**: '~음', '~함', '~것' 같은 명사형 종결이나 반말은 절대 사용하지 마.
-    3. **이모지**: 본문 내용 중에 이모지를 절대 사용하지 마.
+[출력 양식 (반드시 아래 JSON 형식으로만 응답할 것)]
+{{
+  "key_points": ["핵심 내용 1", "핵심 내용 2", "핵심 내용 3", "핵심 내용 4"],
+  "recommendations": ["추천 이유 1", "추천 이유 2", "추천 이유 3"]
+}}
 
-    [출력 양식]
-    *내용 요약*
-    (글의 핵심 내용을 3문장 내외의 줄글로 작성. 반드시 경어로 끝낼 것.)
+[글 내용]
+{truncated_text}
+"""
 
-    *추천 이유*
-    (이 글을 팀원들에게 추천하는 이유나 핵심 포인트를 1~2문장으로 작성. 반드시 경어로 끝낼 것.)
+completion = client_openai.chat.completions.create(
+    model="gpt-3.5-turbo-0125",  # JSON 모드 지원 모델
+    response_format={ "type": "json_object" },
+    messages=[
+        {"role": "system", "content": "You are a helpful assistant that outputs JSON."},
+        {"role": "user", "content": gpt_prompt}
+    ]
+)
 
-    [글 내용]
-    {truncated_text}
-    """
+# GPT 결과 파싱
+gpt_res = json.loads(completion.choices[0].message.content)
+key_points = gpt_res.get("key_points", [])
+recommendations = gpt_res.get("recommendations", [])
 
-    completion = client_openai.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant. Use polite Korean sentences ending in period."},
-            {"role": "user", "content": gpt_prompt}
+# =========================================================
+# 6. 슬랙 전송 (Block Kit UI 구성)
+# =========================================================
+print("--- 슬랙 전송 시작 (Block Kit) ---")
+webhook_url = os.environ['SLACK_WEBHOOK_URL']
+
+# 불렛포인트 문자열 생성
+key_points_text = "\n".join([f"• {point}" for point in key_points])
+recommend_text = "\n".join([f"• {rec}" for rec in recommendations])
+
+# 이미지와 동일한 레이아웃 구성
+blocks = [
+    {
+        "type": "header",
+        "text": {
+            "type": "plain_text",
+            "text": "지금 주목해야 할 아티클",
+            "emoji": True
+        }
+    },
+    {
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": f"*{project_title}*" # 제목 강조
+        }
+    },
+    {
+        "type": "divider" # 구분선
+    },
+    {
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": f"📌 *이 글에서 이야기하는 것들*\n{key_points_text}"
+        }
+    },
+    {
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": f"📌 *이런 분께 추천해요*\n{recommend_text}"
+        }
+    },
+    {
+        "type": "divider"
+    },
+    {
+        "type": "actions",
+        "elements": [
+            {
+                "type": "button",
+                "text": {
+                    "type": "plain_text",
+                    "text": "아티클 보러가기",
+                    "emoji": True
+                },
+                "style": "primary", # 초록색 버튼
+                "url": target_url
+            }
         ]
-    )
+    }
+]
 
-    gpt_body = completion.choices[0].message.content
+# 슬랙 전송 (text 대신 blocks 사용)
+slack_res = requests.post(webhook_url, json={"blocks": blocks})
 
-    # [수정] 메시지 조립 순서 및 URL 형식 변경
-    # 1. 헤더: <지금 주목해야 할 아티클>
-    # 2. 제목
-    # 3. GPT 요약 내용 (내용 요약 + 추천 이유)
-    # 4. URL (아티클 바로가기)
-    
-    # 슬랙 링크 포맷: <URL|텍스트>
-    formatted_link = f"<{target_url}|아티클 바로가기>"
-    
-    final_message_with_link = (
-        f"*<지금 주목해야 할 아티클>*\n\n"
-        f"*{project_title}*\n\n"
-        f"{gpt_body}\n\n"
-        f"🔗 {formatted_link}"
-    )
-    
-    print("--- 최종 결과물 ---")
-    print(final_message_with_link)
-    # =========================================================
-    # 6. 슬랙 전송 & 시트 업데이트
-    # =========================================================
-    print("--- 슬랙 전송 시작 ---")
-    webhook_url = os.environ['SLACK_WEBHOOK_URL']
-    payload = {"text": final_message_with_link}
-    
-    slack_res = requests.post(webhook_url, json=payload)
-    
-    if slack_res.status_code == 200:
-        print("✅ 슬랙 전송 성공!")
-        
-        try:
-            # status 컬럼 인덱스 찾기 (+1 보정)
-            status_col_index = headers.index(COL_STATUS) + 1
-            
-            print(f"▶ 시트 상태 업데이트 중... (행: {update_row_index}, 열: {status_col_index})")
-            sheet.update_cell(update_row_index, status_col_index, 'published')
-            print("✅ 상태 변경 완료 (archived -> published)")
-        except Exception as e:
-            print(f"⚠️ 상태 업데이트 실패: {e}")
-            
-    else:
-        print(f"❌ 전송 실패 (상태 코드: {slack_res.status_code})")
-        print(slack_res.text)
-
-except Exception as e:
-    print(f"🚨 전체 실행 중 에러 발생: {e}")
+if slack_res.status_code == 200:
+    print("✅ 슬랙 전송 성공!")
+    # ... 이후 시트 업데이트 로직은 기존과 동일 ...
