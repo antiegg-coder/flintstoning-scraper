@@ -1,4 +1,4 @@
-import os, time, json, re
+import os, sys, time, json, re
 import gspread
 from datetime import datetime
 from oauth2client.service_account import ServiceAccountCredentials
@@ -132,3 +132,4 @@ if __name__ == "__main__":
         update_sheet(ws, data)
     except Exception as e:
         print(f"🚨 {CONFIG['name']} 실행 실패: {e}")
+        sys.exit(1)

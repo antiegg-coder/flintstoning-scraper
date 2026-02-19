@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -12,9 +13,10 @@ import random
 # =========================================================
 # 1. 설정 및 인증
 # =========================================================
+had_fatal_error = False
 try:
     print("--- [Mix Sender] 프로세스를 시작합니다 ---")
-    
+
     if 'GOOGLE_CREDENTIALS' not in os.environ:
         raise Exception("환경변수 GOOGLE_CREDENTIALS가 설정되지 않았습니다.")
 
@@ -188,5 +190,9 @@ try:
 
 except Exception as e:
     print(f"❌ 치명적 오류: {e}")
+    had_fatal_error = True
 finally:
     print("--- [Mix Sender] 모든 프로세스가 종료되었습니다 ---")
+
+if had_fatal_error:
+    sys.exit(1)
